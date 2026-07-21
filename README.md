@@ -1,5 +1,8 @@
 # logscope
 
+[![test](https://github.com/jcuhnoio/logscope/actions/workflows/test.yml/badge.svg)](https://github.com/jcuhnoio/logscope/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Timestamped serial-log monitoring with inline agent annotations, a web UI, and
 a durable per-project knowledge file.
 
@@ -8,7 +11,26 @@ walls of serial output into a chat window. The daemon owns the port; the human
 watches the stream in a browser; the agent queries it with a cursor and writes
 its analysis back into the timeline at the point where each thing happened.
 
-Zero runtime dependencies — Node 18+ and `stty`, nothing else.
+Zero runtime dependencies — Node 18+ and `stty`, nothing else. macOS and
+Linux; no Windows (everything goes through `stty`).
+
+## Install
+
+```sh
+git clone https://github.com/jcuhnoio/logscope
+cd logscope && npm link        # puts `logscope` on PATH
+```
+
+Using Claude Code? The repo doubles as a plugin marketplace that teaches the
+agent the query discipline (cursors, `wait` over polling, annotating as it
+goes):
+
+```
+/plugin marketplace add jcuhnoio/logscope
+/plugin install logscope@logscope-tools
+```
+
+The plugin provides the skill; the CLI still comes from `npm link` above.
 
 ## Quick start
 
@@ -141,6 +163,14 @@ session. Edit it in the browser, or `logscope knowledge --append "..."`.
 Sessions are append-only JSONL, so any session is replayable and greppable long
 after the fact.
 
+## Security model
+
+The daemon binds to `127.0.0.1` only, with no auth: anything that can reach
+the port can send bytes to your hardware and run configured commands. Do not
+reverse-proxy it onto a network you don't trust. For remote access (checking
+the bench from a phone), put it behind something that authenticates the
+*network*, e.g. `tailscale serve localhost:7717`.
+
 ## Platform notes
 
 macOS serial is particular, and logscope works around it:
@@ -151,4 +181,17 @@ macOS serial is particular, and logscope works around it:
 - When the previous owner exits, the line reverts to its default baud, so the
   first quarter-second after `stty` is drained and discarded as garbage.
 
-See `doc/API.md` for the HTTP contract.
+On Linux the device nodes are `ttyUSB*`/`ttyACM*` and the same non-blocking
+read loop applies. Windows is unsupported.
+
+## Developing
+
+```sh
+npm test     # node:test — no dependencies to install
+```
+
+CI runs the suite on ubuntu + macos × Node 18/22. The serial layer itself
+can't run in CI (no tty), but the line splitter, parser, store, XMODEM engine,
+flash-script loader and the HTTP API all have coverage without hardware.
+
+See `doc/API.md` for the HTTP contract and `doc/CONFIG.md` for configuration.
