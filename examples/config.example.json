@@ -24,12 +24,13 @@
 
   "mirror": "~/logs/board.txt",
 
-  "_comment_commands": "Aliases for `logscope run <name>`. {device}/{baud} substitute from the live source when detachPort is set.",
+  "_comment_commands": "Aliases for `logscope run <name>`. A debug-probe flasher (openocd/jlink/probe-rs) belongs here — it never touches the UART, so the port stays attached and the reset banner lands in the timeline. {device}/{baud} substitute from the live source when detachPort is set; detachPort is only for tools that flash over the UART itself (esptool, mcumgr).",
   "commands": {
-    "build": { "cmd": "make -j8", "timeout": 900000, "label": "make" }
+    "build": { "cmd": "make -j8", "timeout": 900000, "label": "make" },
+    "flash": { "cmd": "openocd -f board/my_board.cfg -c 'program build/app.elf verify reset exit'", "timeout": 300000 }
   },
 
-  "_comment_flash": "Device-specific: `logscope flash` runs this script (contract in .logscope/scripts/README.md). Delete this key if flashing is not a thing you do over serial.",
+  "_comment_flash": "Native serial flashing, for UART bootloaders you'd otherwise drive by hand: `logscope flash <image>` runs this script (contract in .logscope/scripts/README.md). Most boards don't need this — delete the key and use a commands alias instead.",
   "flash": {
     "script": "scripts/flash.mjs"
   }

@@ -87,13 +87,35 @@ most-specific first. A line nothing recognizes is kept raw, never dropped.
 
 ## Flashing
 
-`logscope flash <image>` drives a firmware flash *without releasing the port*,
-so the bootloader dialogue, transfer progress, and post-reset boot all land in
-one timeline. The device-specific sequence is a small ES module in
-`.logscope/scripts/` named by `flash.script` in config — logscope supplies the
-raw-mode port, an XMODEM-1K engine, and timeline annotation helpers; the
-script supplies the bootloader ritual. No script configured → `flash` refuses
-and points at the contract doc.
+Three tiers, in order of how often they apply:
+
+**Debug probe (OpenOCD, J-Link, probe-rs, pyocd, STM32CubeProgrammer…)** —
+the common case, and the strongest one here: a probe flashes over SWD/JTAG and
+never touches the UART, so a plain `commands` alias is all it takes. logscope
+keeps the port open through the whole flash and catches the reset banner in
+the same timeline as the command that caused it.
+
+```json
+"flash": { "cmd": "openocd -f board/st_nucleo_f4.cfg -c 'program build/app.elf verify reset exit'" }
+```
+```sh
+logscope run flash && logscope wait --pattern 'Booting' --timeout 15
+```
+
+**External UART tool (esptool, mcumgr, avrdude…)** — these need the tty
+itself, so the alias adds `detachPort`: logscope hands the port over, captures
+the tool's stdout into the timeline, and takes the port back when it exits.
+
+```json
+"flash": { "cmd": "esptool --port {device} write_flash 0 build/app.bin", "detachPort": "board" }
+```
+
+**Native serial flashing (`logscope flash <image>`)** — for UART bootloaders
+you'd otherwise drive by hand. The device-specific sequence is a small ES
+module in `.logscope/scripts/` named by `flash.script` in config; logscope
+supplies the raw-mode port, an XMODEM-1K engine, and annotation helpers, and
+the whole bootloader dialogue lands in the timeline, byte for byte. No script
+configured → `flash` refuses and points at the contract doc.
 
 ## Knowledge
 

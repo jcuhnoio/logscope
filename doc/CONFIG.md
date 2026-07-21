@@ -93,26 +93,38 @@ invocations stay out of the agent's context. String or object form:
 
 ```json
 "build": { "cmd": "make -j8", "timeout": 900000, "label": "make", "cwd": null },
-"flash-ext": {
-  "cmd": "python3 tools/flash.py {device}",
+"flash": {
+  "cmd": "openocd -f interface/jlink.cfg -f target/nrf52.cfg -c 'program build/app.elf verify reset exit'",
+  "timeout": 300000
+},
+"flash-uart": {
+  "cmd": "esptool --port {device} --baud 460800 write_flash 0 build/app.bin",
   "detachPort": "board",
   "timeout": 600000
 }
 ```
 
+- A **debug-probe flasher** (OpenOCD, J-Link Commander, probe-rs, pyocd) is
+  just an alias — it works over SWD/JTAG, so logscope keeps the UART open and
+  the reset banner lands in the timeline right after the flash command.
+- `detachPort` hands the tty to the command and takes it back after — needed
+  only for tools that flash *over the UART itself* (esptool, mcumgr, avrdude).
 - `{device}` / `{baud}` are substituted from the live source named by
   `detachPort`, so aliases never hardcode a tty path that goes stale.
-- `detachPort` hands the tty to the command and takes it back after — only for
-  external tools that must drive the device themselves. Prefer a flash script
-  (below), which keeps the port and the timeline.
 - Anything after the alias on the command line is appended:
   `logscope run build V=1`.
 
-## `flash` — device-specific flashing *(hot-reloaded)*
+## `flash` — native serial flashing *(hot-reloaded)*
+
+For UART bootloaders you would otherwise drive by hand in a terminal. If your
+board flashes via a debug probe or an existing CLI tool, you don't need this —
+use a `commands` alias (above) and skip this section.
 
 `logscope flash <image>` runs an ES module you provide; nothing about any
 particular bootloader is built in. Without this key, `flash` refuses with a
-pointer here.
+pointer here. What it buys over `detachPort`: logscope never releases the
+port, so the bootloader dialogue and transfer progress are annotated inline
+instead of buried in another tool's stdout.
 
 ```json
 "flash": {
