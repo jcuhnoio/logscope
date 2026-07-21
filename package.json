@@ -5,5 +5,9 @@
   "type": "module",
   "bin": { "logscope": "./bin/logscope" },
   "engines": { "node": ">=18" },
-  "private": true
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/jcuhnoio/logscope.git" },
+  "scripts": {
+    "test": "node --test test/"
+  }
 }
