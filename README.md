@@ -14,6 +14,12 @@ its analysis back into the timeline at the point where each thing happened.
 Zero runtime dependencies — Node 18+ and `stty`, nothing else. macOS and
 Linux; no Windows (everything goes through `stty`).
 
+![An AI agent reading device logs and executing scripts in real time according to what the logs say — flashing firmware over XMODEM, triggering a server-side OTA, and annotating its analysis inline at the exact log lines that prompted each action](doc/logscope-demo.png)
+
+*A live session: the agent flashes firmware, watches the boot, kicks a
+server-side OTA, and narrates its reasoning — every annotation anchored to the
+log line that prompted it.*
+
 ## Install
 
 ```sh
