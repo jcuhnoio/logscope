@@ -72,6 +72,7 @@ export async function sendXmodem(port, data, opts = {}) {
 		ackTimeout = 10000,
 		retries = 16,
 		blockSize = 1024,
+		eotTimeout = 3000,
 		onProgress = () => {},
 		onNote = () => {},
 	} = opts;
@@ -147,7 +148,7 @@ export async function sendXmodem(port, data, opts = {}) {
 	// 3. EOT, retried — a lost EOT looks identical to a hung transfer.
 	for (let attempt = 0; attempt < 5; attempt++) {
 		port.write(Buffer.from([EOT]));
-		const r = await port.rawRead(1, 3000);
+		const r = await port.rawRead(1, eotTimeout);
 		if (r && r[0] === ACK) {
 			return { ok: true, blocks: nBlocks, retries: retryTotal };
 		}

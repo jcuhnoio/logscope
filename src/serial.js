@@ -19,6 +19,7 @@ import fs from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parseLine } from "./parse.js";
+import { LineSplitter } from "./linesplit.js";
 import { whoHolds } from "./holder.js";
 
 const execFileP = promisify(execFile);
@@ -85,7 +86,7 @@ export class SerialPort {
 
 		this.fd = null;
 		this.buf = Buffer.allocUnsafe(READ_BUF);
-		this.pending = "";
+		this.splitter = new LineSplitter();
 		this.connected = false;
 		this.draining = false;
 		this.lines = 0;
@@ -188,31 +189,15 @@ export class SerialPort {
 
 	#onData(chunk) {
 		this.lastAt = Date.now();
-		this.pending += chunk.toString("utf8");
-
-		// Normalise line endings; devices are inconsistent. Two traps here, both
-		// of which manufacture a blank line between every real one:
-		//
-		//  * `\r\r\n` — a firmware that writes "\r\n" through a driver that also
-		//    maps NL→CRNL. Splitting on \r *or* \n sees two terminators, so the
-		//    run of CRs before a LF has to be part of the same terminator.
-		//  * a CRLF straddling a read boundary — the \r ends this chunk and the
-		//    \n starts the next. So trailing CRs are held, not split on, until we
-		//    have seen the byte that follows them.
-		const held = /\r+$/.exec(this.pending);
-		const body = held ? this.pending.slice(0, -held[0].length) : this.pending;
-		const parts = body.split(/\r*\n|\r/);
-		this.pending = parts.pop() + (held ? held[0] : "");
-		for (const line of parts) this.#emit(line, false);
+		for (const line of this.splitter.push(chunk.toString("utf8"))) {
+			this.#emit(line, false);
+		}
 
 		clearTimeout(this.partialTimer);
-		if (this.pending.length) {
+		if (this.splitter.pending.length) {
 			this.partialTimer = setTimeout(() => {
-				if (!this.pending.length) return;
-				// a held CR that never got its LF is a terminator after all
-				const p = this.pending.replace(/\r+$/, "");
-				this.pending = "";
-				this.#emit(p, true);
+				const p = this.splitter.flush();
+				if (p != null) this.#emit(p, true);
 			}, PARTIAL_FLUSH_MS);
 		}
 	}
@@ -247,7 +232,7 @@ export class SerialPort {
 		if (!this.connected) throw new Error(`${this.name} is not connected`);
 		// Anything already half-parsed belongs to the text world; drop it.
 		clearTimeout(this.partialTimer);
-		this.pending = "";
+		this.splitter.flush();
 		this.rawMode = true;
 		this.rawBuf = Buffer.alloc(0);
 		this.rawWaiter = null;

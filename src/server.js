@@ -90,11 +90,14 @@ export async function startServer({ projectDir, port }) {
 	fs.mkdirSync(cfg._dir, { recursive: true });
 	const listenPort = port ?? cfg.port ?? 7717;
 
+	// Build every parser before the Store exists: a preset typo in config must
+	// fail the whole startup without leaving a half-created session behind.
+	const parsers = (cfg.sources ?? []).map((s) => ({ s, parse: sourceParser(cfg, s) }));
+
 	const store = new Store(cfg._dir);
 
 	const sources = new Map();
-	for (const s of cfg.sources ?? []) {
-		const parse = sourceParser(cfg, s);
+	for (const { s, parse } of parsers) {
 		const src =
 			s.type === "file"
 				? new FileSource({ ...s, parse }, store)

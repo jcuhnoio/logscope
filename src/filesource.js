@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseLine } from "./parse.js";
+import { LineSplitter } from "./linesplit.js";
 
 const POLL_MS = 150;
 
@@ -25,6 +26,7 @@ export class FileSource {
 		this.pos = 0;
 		this.ino = null;
 		this.buf = "";
+		this.splitter = new LineSplitter();
 		this.connected = false;
 		this.lines = 0;
 		this.lastAt = null;
@@ -106,9 +108,8 @@ export class FileSource {
 			fs.closeSync(fd);
 		}
 
-		// see SerialPort#onData — a \r run before a \n is one terminator, not two
-		const parts = this.buf.split(/\r*\n|\r/);
-		this.buf = parts.pop();
+		const parts = this.splitter.push(this.buf);
+		this.buf = "";
 		if (!parts.length) return;
 		this.lastAt = Date.now();
 		for (const raw of parts) {

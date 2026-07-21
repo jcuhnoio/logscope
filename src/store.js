@@ -159,7 +159,12 @@ export class Store {
 
 	annotationsIn(from = 0, to = null) {
 		const hi = to ?? Infinity;
-		return this.annotations.filter((a) => a.seq > from && a.seq <= hi);
+		// `from` is exclusive like every line cursor, with one carve-out: an
+		// annotation made before any line exists anchors at seq 0, and a
+		// from-the-top query (from=0) must still deliver it.
+		return this.annotations.filter(
+			(a) => (a.seq > from || (a.seq === 0 && from <= 0)) && a.seq <= hi
+		);
 	}
 
 	summary({ since = 0, to = null, src = null }) {
@@ -271,8 +276,11 @@ export class Store {
 		}
 	}
 
+	/** Resolves once both JSONL streams have flushed to disk. */
 	close() {
-		this.linesFile.end();
-		this.annFile.end();
+		return Promise.all([
+			new Promise((r) => this.linesFile.end(r)),
+			new Promise((r) => this.annFile.end(r)),
+		]);
 	}
 }
