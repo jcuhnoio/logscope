@@ -3,11 +3,18 @@
   "version": "0.1.0",
   "description": "Timestamped serial logs with inline agent annotations",
   "type": "module",
-  "bin": { "logscope": "./bin/logscope" },
-  "engines": { "node": ">=18" },
+  "bin": {
+    "logscope": "./bin/logscope"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/jcuhnoio/logscope.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jcuhnoio/logscope.git"
+  },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js"
   }
 }
