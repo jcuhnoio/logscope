@@ -1,0 +1,7 @@
+{
+  "name": "logscope",
+  "description": "Timestamped serial-log monitoring with inline agent annotations, a web UI, and a durable per-project knowledge file. Lets Claude observe device logs, send commands, and run external steps without logs being pasted into chat.",
+  "version": "0.1.0",
+  "author": { "name": "jcuhnoio" },
+  "keywords": ["serial", "logs", "firmware", "embedded", "monitoring"]
+}

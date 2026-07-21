@@ -1,0 +1,11 @@
+{
+  "name": "logscope-tools",
+  "owner": { "name": "jcuhnoio" },
+  "plugins": [
+    {
+      "name": "logscope",
+      "source": "./",
+      "description": "Timestamped serial-log monitoring with inline agent annotations and a web UI."
+    }
+  ]
+}

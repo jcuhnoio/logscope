@@ -1,0 +1,36 @@
+{
+  "_comment": "Copy into <project>/.logscope/config.json and edit. Full reference: doc/CONFIG.md. Keys starting with _ are comments.",
+
+  "port": 7717,
+
+  "sources": [
+    {
+      "name": "board",
+      "type": "serial",
+      "device": "/dev/cu.usbserial-XXXX",
+      "baud": 115200
+    },
+    {
+      "_comment": "Optional second input on the same timeline — read-only file tail.",
+      "name": "server",
+      "type": "file",
+      "file": "~/logs/server.log",
+      "from": "end"
+    }
+  ],
+
+  "_comment_parsers": "Omit for auto (all built-in presets). See doc/CONFIG.md for the preset table, or use custom regex `rules`.",
+  "parsers": null,
+
+  "mirror": "~/logs/board.txt",
+
+  "_comment_commands": "Aliases for `logscope run <name>`. {device}/{baud} substitute from the live source when detachPort is set.",
+  "commands": {
+    "build": { "cmd": "make -j8", "timeout": 900000, "label": "make" }
+  },
+
+  "_comment_flash": "Device-specific: `logscope flash` runs this script (contract in .logscope/scripts/README.md). Delete this key if flashing is not a thing you do over serial.",
+  "flash": {
+    "script": "scripts/flash.mjs"
+  }
+}

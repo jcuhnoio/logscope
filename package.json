@@ -1,0 +1,9 @@
+{
+  "name": "logscope",
+  "version": "0.1.0",
+  "description": "Timestamped serial logs with inline agent annotations",
+  "type": "module",
+  "bin": { "logscope": "./bin/logscope" },
+  "engines": { "node": ">=18" },
+  "private": true
+}

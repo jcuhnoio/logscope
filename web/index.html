@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>logscope</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">logscope</div>
+
+  <div class="statgroup">
+    <span class="stat" id="statSession" title="session id">—</span>
+    <span class="sep"></span>
+    <span class="stat" id="statPorts"></span>
+    <span class="sep"></span>
+    <span class="stat" title="head seq">head <b id="statHead">0</b></span>
+    <span class="sep"></span>
+    <span class="stat" title="lines/sec over the last 5s"><b id="statRate">0.0</b>/s</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <label class="devpick" title="serial device to monitor">
+    <select id="devSelect" class="inp sel"></select>
+  </label>
+  <select id="baudSelect" class="inp sel" title="baud rate">
+    <option>9600</option><option>19200</option><option>38400</option>
+    <option>57600</option><option selected>115200</option>
+    <option>230400</option><option>460800</option><option>921600</option>
+  </select>
+
+  <span id="connState" class="conn conn-idle" title="stream state">offline</span>
+
+  <!-- mobile only: the split becomes one pane at a time -->
+  <div id="viewSwitch" class="vsw" role="tablist">
+    <button class="vsw-b on" data-view="log" role="tab">log</button>
+    <button class="vsw-b" data-view="side" role="tab">notes</button>
+  </div>
+
+  <button id="themeBtn" class="btn ghost" title="toggle theme">◐</button>
+</header>
+
+<div id="split">
+
+  <!-- ───────────────────────── MAIN ───────────────────────── -->
+  <section id="mainPane">
+
+    <div id="filterbar">
+      <input id="filterText" class="inp grow" type="text" spellcheck="false"
+             placeholder="filter — plain text or /regex/  ( press / )">
+      <span id="filterErr" class="ferr" hidden>bad regex</span>
+
+      <div class="toggles" id="levelToggles">
+        <button class="tg tg-err on" data-level="err">err</button>
+        <button class="tg tg-wrn on" data-level="wrn">wrn</button>
+        <button class="tg tg-inf on" data-level="inf">inf</button>
+        <button class="tg tg-dbg on" data-level="dbg">dbg</button>
+      </div>
+
+      <div class="toggles" id="srcToggles"></div>
+
+      <span class="spacer"></span>
+      <span id="countLabel" class="count">showing 0 of 0</span>
+      <input id="jumpSeq" class="inp seqinp" type="text" inputmode="numeric"
+             spellcheck="false" placeholder="seq →" title="jump to seq">
+    </div>
+
+    <div id="logScroll">
+      <div id="logList"></div>
+      <div id="logEmpty" class="empty">waiting for lines…</div>
+    </div>
+
+    <button id="newPill" class="pill" hidden>0 new lines ↓</button>
+
+    <form id="cmdbar" autocomplete="off">
+      <select id="cmdPort" class="inp sel" title="target port"></select>
+      <input id="cmdText" class="inp grow" type="text" spellcheck="false"
+             placeholder="send to port…  (↑/↓ history)">
+      <button class="btn" type="submit">send</button>
+    </form>
+  </section>
+
+  <div id="divider" title="drag to resize"><span></span></div>
+
+  <!-- ───────────────────────── SIDE ───────────────────────── -->
+  <aside id="sidePane">
+    <div id="tabs" role="tablist">
+      <button class="tab active" data-tab="knowledge" role="tab">Knowledge</button>
+      <button class="tab" data-tab="annotations" role="tab">Annotations</button>
+      <span class="spacer"></span>
+      <span id="saveState" class="savestate" data-state="idle">saved</span>
+    </div>
+
+    <!-- Knowledge -->
+    <div class="tabpane active" id="paneKnowledge">
+      <div id="conflict" class="banner" hidden>
+        <span>knowledge.md changed on disk while you were editing.</span>
+        <button class="btn tiny" id="conflictMine">keep mine</button>
+        <button class="btn tiny" id="conflictTheirs">take theirs</button>
+      </div>
+      <div id="saveError" class="banner err" hidden>
+        <span id="saveErrorMsg">save failed</span>
+        <button class="btn tiny" id="retrySave">retry</button>
+      </div>
+      <div class="paneheader">
+        <span class="path" id="notesPath">.logscope/knowledge.md</span>
+        <span class="spacer"></span>
+        <button class="btn ghost tiny" id="previewBtn" title="toggle rendered preview">preview</button>
+      </div>
+      <textarea id="notesEditor" class="editor" spellcheck="false"
+                placeholder="# notes…"></textarea>
+      <div id="notesPreview" class="preview md" hidden></div>
+    </div>
+
+    <!-- Annotations -->
+    <div class="tabpane" id="paneAnnotations">
+      <div class="paneheader">
+        <input id="annFilter" class="inp grow" type="text" spellcheck="false"
+               placeholder="filter annotations…">
+        <span id="annCount" class="count">0</span>
+      </div>
+      <div id="annList" class="annlist"></div>
+    </div>
+  </aside>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

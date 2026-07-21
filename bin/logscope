@@ -1,0 +1,410 @@
+#!/usr/bin/env node
+// logscope CLI — the agent-facing surface.
+//
+// Output is deliberately terse plain text, not JSON: every subcommand is meant
+// to be read by a model with a token budget. `wait` and `summary` are the hot
+// paths; `tail` is the escape hatch for when something unexpected happened and
+// you genuinely need to look.
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(HERE, "..");
+const PORT = Number(process.env.LOGSCOPE_PORT || 7717);
+const BASE = `http://127.0.0.1:${PORT}`;
+
+const argv = process.argv.slice(2);
+const cmd = argv.shift();
+
+const flags = {};
+const rest = [];
+for (let i = 0; i < argv.length; i++) {
+	const a = argv[i];
+	if (a === "--") {
+		rest.push(...argv.slice(i + 1));
+		break;
+	}
+	if (a.startsWith("--")) {
+		const eq = a.indexOf("=");
+		if (eq > 0) flags[a.slice(2, eq)] = a.slice(eq + 1);
+		else if (argv[i + 1] && !argv[i + 1].startsWith("--")) flags[a.slice(2)] = argv[++i];
+		else flags[a.slice(2)] = true;
+	} else rest.push(a);
+}
+
+const die = (msg, code = 1) => {
+	process.stderr.write(msg.replace(/\s+$/, "") + "\n");
+	process.exit(code);
+};
+
+async function api(p, body, method) {
+	let r;
+	try {
+		r = await fetch(BASE + p, {
+			method: method ?? (body ? "POST" : "GET"),
+			headers: body ? { "content-type": "application/json" } : undefined,
+			body: body ? JSON.stringify(body) : undefined,
+		});
+	} catch (err) {
+		// Distinguish "nothing is listening" from any other transport failure —
+		// reporting a stalled request as "daemon is not running" sends you off
+		// restarting a perfectly healthy daemon mid-capture.
+		const down = /ECONNREFUSED|other side closed|socket hang up/i.test(
+			`${err.message} ${err.cause?.message ?? ""}`
+		);
+		die(
+			down
+				? `logscope daemon is not running on ${BASE}.\n` +
+						`Start it with:  logscope start --project <dir>\n(${err.message})`
+				: `request to ${p} failed: ${err.message}` +
+						(err.cause ? ` (${err.cause.message})` : "")
+		);
+	}
+	const j = await r.json().catch(() => ({ error: `non-JSON response (HTTP ${r.status})` }));
+	if (!r.ok) die(`error: ${j.error ?? r.status}`);
+	return j;
+}
+
+// ---- formatting ------------------------------------------------------------
+
+const mmss = (ms) => {
+	const s = Math.floor(ms / 1000);
+	return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}.${String(
+		ms % 1000
+	).padStart(3, "0")}`;
+};
+
+function fmtLine(l, { seq = true, src = false } = {}) {
+	const parts = [];
+	if (seq) parts.push(String(l.seq).padStart(6));
+	parts.push(mmss(l.mono));
+	if (src) parts.push(`<${l.src}>`);
+	if (l.lvl && l.lvl !== "inf") parts.push(l.lvl.toUpperCase());
+	parts.push(l.tag ? `${l.tag}: ${l.msg}` : l.msg);
+	return parts.join(" ");
+}
+
+const printLines = (lines, opts) => {
+	for (const l of lines) process.stdout.write(fmtLine(l, opts) + "\n");
+};
+
+// Node's fetch (undici) aborts a response after 300 s of no headers, so a single
+// long-poll cannot outlive that — and a firmware download legitimately runs for
+// 20+ minutes. Poll in sub-300 s slices instead. No match can slip between
+// slices: each request passes the cursor from the last, and the server scans
+// already-buffered lines before it starts waiting.
+const WAIT_SLICE_MS = 120_000;
+
+async function waitFor({ pattern, flags, src, since, timeoutMs, context }) {
+	const deadline = Date.now() + timeoutMs;
+	let cursor = since;
+	for (;;) {
+		const left = deadline - Date.now();
+		if (left <= 0) return { matched: null, timedOut: true, cursor, elapsed_ms: timeoutMs };
+		const r = await api("/api/wait", {
+			pattern,
+			flags: flags ?? "",
+			src: src ?? null,
+			since: cursor,
+			timeout: Math.min(left, WAIT_SLICE_MS),
+			context,
+		});
+		if (!r.timedOut) return r;
+		cursor = r.cursor;
+	}
+}
+
+// ---- commands --------------------------------------------------------------
+
+const COMMANDS = {
+	async start() {
+		const project = path.resolve(flags.project ?? process.cwd());
+		const { startServer } = await import(path.join(ROOT, "src", "server.js"));
+		if (flags.detach) {
+			// One fd, reused for stdout and stderr. "a" is a file-open flag,
+			// not a valid stdio entry — passing it threw ERR_INVALID_SYNC_FORK_INPUT
+			// and made --detach unusable, which is why this path went unexercised.
+			fs.mkdirSync(path.join(project, ".logscope"), { recursive: true });
+			const logFd = fs.openSync(path.join(project, ".logscope", "daemon.log"), "a");
+			const child = spawn(
+				process.execPath,
+				[path.join(ROOT, "bin", "logscope"), "start", "--project", project],
+				{ detached: true, stdio: ["ignore", logFd, logFd] }
+			);
+			child.unref();
+			process.stdout.write(`logscope started (pid ${child.pid}) → ${BASE}\n`);
+			return;
+		}
+		const s = await startServer({ projectDir: project, port: PORT });
+		const ports = s.sources.size
+			? [...s.sources.values()].map((x) => `${x.name}${x.status().connected ? "" : " (down)"}`).join(", ")
+			: "none configured — add sources to .logscope/config.json";
+		process.stdout.write(
+			`logscope ${BASE}\n  project ${project}\n  session ${s.store.sessionId}\n  sources ${ports}\n`
+		);
+	},
+
+	async status() {
+		const s = await api("/api/status");
+		process.stdout.write(`session ${s.sessionId}  head=${s.head}  project=${s.project}\n`);
+		for (const p of s.ports) {
+			const age = p.lastAt ? `${Math.round((Date.now() - p.lastAt) / 1000)}s ago` : "never";
+			process.stdout.write(
+				`  ${p.connected ? "UP  " : "DOWN"} ${p.name.padEnd(10)} ${p.device}  ${p.lines} lines, last ${age}\n`
+			);
+		}
+		if (s.commands?.length) process.stdout.write(`  aliases: ${s.commands.join(", ")}\n`);
+	},
+
+	async wait() {
+		const pattern = flags.pattern ?? rest[0];
+		if (!pattern) die("usage: logscope wait --pattern <regex> [--since N] [--timeout S] [--src NAME]");
+		const since = flags.since != null ? Number(flags.since) : (await api("/api/status")).head;
+		const r = await waitFor({
+			pattern,
+			flags: flags.i ? "i" : "",
+			src: flags.src ?? null,
+			since,
+			timeoutMs: Number(flags.timeout ?? 60) * 1000,
+			context: Number(flags.context ?? 3),
+		});
+		if (r.timedOut) {
+			process.stdout.write(
+				`TIMEOUT after ${(r.elapsed_ms / 1000).toFixed(1)}s — no match for /${pattern}/\ncursor=${r.cursor}\n`
+			);
+			process.exit(2);
+		}
+		for (const l of r.before) process.stdout.write("  " + fmtLine(l) + "\n");
+		process.stdout.write("→ " + fmtLine(r.matched) + "\n");
+		for (const l of r.after) process.stdout.write("  " + fmtLine(l) + "\n");
+		process.stdout.write(`matched in ${(r.elapsed_ms / 1000).toFixed(1)}s  cursor=${r.cursor}\n`);
+	},
+
+	async summary() {
+		const s = await api("/api/summary", {
+			since: Number(flags.since ?? 0),
+			to: flags.to != null ? Number(flags.to) : null,
+			src: flags.src ?? null,
+		});
+		process.stdout.write(`seq ${s.range[0]}..${s.range[1]}  ${s.count} lines\n`);
+		const lv = Object.entries(s.byLevel)
+			.map(([k, v]) => `${k}=${v}`)
+			.join("  ");
+		if (lv) process.stdout.write(`  levels: ${lv}\n`);
+		const tg = Object.entries(s.byTag)
+			.sort((a, b) => b[1] - a[1])
+			.slice(0, 12)
+			.map(([k, v]) => `${k}=${v}`)
+			.join("  ");
+		if (tg) process.stdout.write(`  tags:   ${tg}\n`);
+		if (s.notable.length) {
+			process.stdout.write(`  notable:\n`);
+			for (const n of s.notable) {
+				process.stdout.write(
+					`    ${n.lvl.toUpperCase()} @${n.seq}${n.count > 1 ? ` x${n.count}` : ""}  ${n.raw}\n`
+				);
+			}
+		}
+		process.stdout.write(`head=${s.head}\n`);
+	},
+
+	async grep() {
+		const pattern = flags.pattern ?? rest[0];
+		if (!pattern) die("usage: logscope grep <regex> [--since N] [--limit N] [--level err,wrn]");
+		const q = new URLSearchParams({
+			grep: pattern,
+			from: String(flags.since ?? 0),
+			limit: String(flags.limit ?? 100),
+			order: flags.last ? "desc" : "asc",
+		});
+		if (flags.i) q.set("flags", "i");
+		if (flags.level) q.set("level", flags.level);
+		if (flags.tag) q.set("tag", flags.tag);
+		if (flags.src) q.set("src", flags.src);
+		const r = await api("/api/lines?" + q);
+		printLines(r.lines, { src: !flags.src });
+		process.stdout.write(
+			`${r.lines.length} match${r.lines.length === 1 ? "" : "es"}${r.truncated ? " (truncated)" : ""}  head=${r.head}\n`
+		);
+	},
+
+	async tail() {
+		const n = Number(flags.n ?? rest[0] ?? 40);
+		const st = await api("/api/status");
+		const q = new URLSearchParams({
+			from: String(flags.since ?? Math.max(0, st.head - n)),
+			limit: String(n),
+			order: flags.since ? "asc" : "desc",
+		});
+		if (flags.level) q.set("level", flags.level);
+		if (flags.src) q.set("src", flags.src);
+		const r = await api("/api/lines?" + q);
+		printLines(r.lines, { src: st.ports.length > 1 });
+		process.stdout.write(`head=${r.head}\n`);
+	},
+
+	async send() {
+		const data = flags.data ?? rest.join(" ");
+		if (!data) die('usage: logscope send "<text>" [--port NAME] [--wait <regex>] [--timeout S]');
+		const r = await api("/api/send", { port: flags.port ?? null, data });
+		process.stdout.write(`sent: ${data}  (cursor=${r.seq})\n`);
+		if (flags.wait) {
+			const w = await waitFor({
+				pattern: flags.wait,
+				since: r.seq,
+				timeoutMs: Number(flags.timeout ?? 15) * 1000,
+				context: Number(flags.context ?? 2),
+			});
+			if (w.timedOut) {
+				process.stdout.write(`TIMEOUT — no /${flags.wait}/ after send\n`);
+				// Show what did arrive; a wrong-but-present reply is the useful clue.
+				const got = await api(`/api/lines?from=${r.seq}&limit=20`);
+				printLines(got.lines);
+				process.exit(2);
+			}
+			for (const l of w.before) process.stdout.write("  " + fmtLine(l) + "\n");
+			process.stdout.write("→ " + fmtLine(w.matched) + "\n");
+			for (const l of w.after) process.stdout.write("  " + fmtLine(l) + "\n");
+			process.stdout.write(`cursor=${w.cursor}\n`);
+		} else {
+			// Give the device a beat to answer, then show the reply window.
+			await new Promise((r2) => setTimeout(r2, Number(flags.settle ?? 0.8) * 1000));
+			const got = await api(`/api/lines?from=${r.seq}&limit=${flags.lines ?? 20}`);
+			printLines(got.lines);
+			process.stdout.write(`head=${got.head}\n`);
+		}
+	},
+
+	async run() {
+		const cmdStr = flags.cmd ?? rest.join(" ");
+		if (!cmdStr) die("usage: logscope run <alias | shell command> [--timeout S] [--label TEXT]");
+		const r = await api("/api/run", {
+			cmd: cmdStr,
+			cwd: flags.cwd ?? null,
+			label: flags.label ?? null,
+			timeout: Number(flags.timeout ?? 120) * 1000,
+		});
+		// Echo what actually ran. An alias that silently resolved to something
+		// stale is invisible otherwise — the run just succeeds at the wrong job.
+		process.stdout.write(`$ ${r.resolved ?? cmdStr}\n`);
+		if (r.stdout) process.stdout.write(r.stdout.replace(/\s*$/, "") + "\n");
+		if (r.stderr) process.stderr.write(r.stderr.replace(/\s*$/, "") + "\n");
+		process.stdout.write(`exit=${r.exit} ${r.ms}ms cursor=${r.cursor}\n`);
+		if (r.truncated) process.stdout.write(`(output truncated; full text: ${r.runFile})\n`);
+		if (r.exit !== 0) process.exit(r.exit);
+	},
+
+	async flash() {
+		const file = flags.file ?? rest[0];
+		if (!file) {
+			die("usage: logscope flash <image-file> [--port NAME] [--no-reboot] [--no-reset]");
+		}
+		process.stdout.write(`flashing ${file} …\n`);
+		const r = await api("/api/flash", {
+			file,
+			port: flags.port ?? null,
+			reboot: !flags["no-reboot"],
+			resetAfter: !flags["no-reset"],
+			author: flags.author ?? "claude",
+		});
+		// blocks/retries/confirmed are script-provided and optional — a script
+		// that isn't XMODEM-shaped reports whatever it reports.
+		const bits = [
+			r.blocks != null ? `${r.blocks} blocks` : null,
+			r.retries != null ? `${r.retries} retries` : null,
+			`${(r.bytes / 1024).toFixed(1)} KB in ${(r.ms / 1000).toFixed(1)}s`,
+		].filter(Boolean);
+		process.stdout.write(
+			`ok: ${bits.join(", ")}${r.confirmed === false ? "  (device confirmation NOT seen)" : ""}\n` +
+				`cursor=${r.cursor}\n`
+		);
+		if (r.confirmed === false) process.exit(3);
+	},
+
+	async note() {
+		const text = flags.text ?? rest.join(" ");
+		if (!text) die('usage: logscope note "<text>" [--seq N] [--kind note|analysis]');
+		const a = await api("/api/annotate", {
+			seq: flags.seq != null ? Number(flags.seq) : null,
+			kind: flags.kind ?? "note",
+			author: flags.author ?? "claude",
+			text,
+		});
+		process.stdout.write(`noted ${a.id} @${a.seq}\n`);
+	},
+
+	async mark() {
+		const label = flags.label ?? rest.join(" ");
+		if (!label) die('usage: logscope mark "<label>"');
+		const a = await api("/api/mark", { label });
+		process.stdout.write(`mark @${a.seq}: ${label}\n`);
+	},
+
+	async knowledge() {
+		if (flags.append) {
+			await api("/api/notes", { append: flags.append }, "PATCH");
+			process.stdout.write("appended\n");
+			return;
+		}
+		if (flags.set) {
+			await api("/api/notes", { markdown: fs.readFileSync(flags.set, "utf8") }, "PUT");
+			process.stdout.write("written\n");
+			return;
+		}
+		const n = await api("/api/notes");
+		process.stdout.write(n.markdown);
+	},
+
+	async open() {
+		spawn("open", [BASE], { detached: true, stdio: "ignore" }).unref();
+		process.stdout.write(`opened ${BASE}\n`);
+	},
+
+	help() {
+		process.stdout.write(HELP);
+	},
+};
+
+const HELP = `logscope — timestamped serial logs with inline agent annotations
+
+  start      [--project DIR] [--detach]     run the daemon
+  open                                      open the web UI
+  status                                    sources, head cursor, line counts
+
+read (cheap first):
+  wait   --pattern RE [--since N] [--timeout S] [--src S] [--context N] [-i]
+                                            block until a line matches; prints
+                                            match + context. exit 2 on timeout.
+  summary [--since N] [--src S]             counts by level/tag + notable errors
+  grep   RE [--since N] [--limit N] [--level err,wrn] [--last] [-i]
+  tail   [-n N] [--since N] [--level ...]   escape hatch: raw recent lines
+
+act:
+  send  "TEXT" [--port NAME] [--wait RE] [--timeout S]
+                                            write to the device; optionally block
+                                            for the reply. auto-annotates.
+  flash <image-file> [--port NAME] [--no-reboot] [--no-reset]
+                                            run the project's flash script
+                                            (.logscope/scripts/, flash.script in
+                                            config.json) over the port logscope
+                                            already owns — bootloader dialogue
+                                            and progress land in the log
+  run   <alias|shell cmd> [--timeout S] [--label T]
+                                            run an external step, anchored in the
+                                            timeline (builds, CSMS triggers)
+
+record:
+  note  "TEXT" [--seq N] [--kind analysis]  annotate at a point in the log
+  mark  "LABEL"                             phase separator
+  knowledge [--append TEXT | --set FILE]    the durable per-project notes file
+
+Every read command prints a trailing cursor/head. Pass it as --since next time
+so you only ever look at what is new.
+`;
+
+const fn = COMMANDS[cmd] ?? (cmd ? null : COMMANDS.help);
+if (!fn) die(`unknown command: ${cmd}\n\n${HELP}`);
+await fn();
