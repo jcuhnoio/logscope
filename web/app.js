@@ -798,7 +798,16 @@ el.devMenu.addEventListener('click', (e) => {
 el.devBtn.addEventListener('click', (e) => {
 	e.stopPropagation();
 	el.devMenu.hidden = !el.devMenu.hidden;
-	if (!el.devMenu.hidden) { state.devSig = null; refreshDevices(); }
+	if (!el.devMenu.hidden) {
+		// mobile renders the menu position:fixed and viewport-wide; hand it the
+		// button's bottom edge so it still opens where the tap happened
+		const r = el.devBtn.getBoundingClientRect();
+		if (r && isFinite(r.bottom)) {
+			document.documentElement.style.setProperty('--devmenu-top', (r.bottom + 6) + 'px');
+		}
+		state.devSig = null;
+		refreshDevices();
+	}
 });
 
 // click anywhere else closes the menu

@@ -704,13 +704,37 @@ body.resizing { user-select: none; cursor: col-resize; }
   /* session id / port list / rate are diagnostics — the head seq is the one
      number worth the width on a phone */
   #statSession, #statPorts, .statgroup .sep { display: none; }
-  .statgroup { order: 5; }
-  .devpick { order: 4; flex: 1 1 140px; min-width: 0; }
-  #devBtn { max-width: none; width: 100%; }
-  .devmenu { left: 0; right: auto; max-width: calc(100vw - 16px); }
-  #baudSelect { order: 4; }
-  #connState { order: 6; margin-left: auto; }
-  #themeBtn { order: 7; }
+
+  /* Two deliberate rows instead of free wrapping: brand/switcher/conn/theme
+     up top, the port pickers + head seq below. Free wrapping put the pickers
+     wherever they fit, which is what buried the logs under a variable-height
+     topbar. */
+  #connState { order: 3; margin-left: auto; }
+  #themeBtn { order: 4; }
+  .devpick { order: 5; flex: 1 1 120px; min-width: 0; }
+  #baudSelect { order: 6; min-height: 32px; }
+  .statgroup { order: 7; margin-left: auto; }
+
+  /* same box as a .vsw-b inside its 1px-bordered group: 30px + 2 */
+  #devBtn {
+    max-width: none;
+    width: 100%;
+    font-size: 13px;
+    padding: 4px 10px;
+    min-height: 32px;
+  }
+
+  /* anchored under the button by --devmenu-top (set on open), but fixed and
+     viewport-wide — an absolute menu overflows the screen when the button
+     sits mid-row */
+  .devmenu {
+    position: fixed;
+    top: var(--devmenu-top, 84px);
+    left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
+    min-width: 0;
+    max-width: none;
+  }
 
   /* --- pane switcher --- */
   .vsw {
@@ -740,7 +764,9 @@ body.resizing { user-select: none; cursor: col-resize; }
 
   /* --- filter bar wraps; toggles stay on one scrollable line --- */
   #filterbar { flex-wrap: wrap; gap: 6px; }
-  #filterText { flex: 1 1 100%; order: 1; }
+  /* row 1: filter input + clear; the input's grow soaks up the row so the
+     toggles wrap to their own line */
+  #filterText { flex: 1 1 200px; order: 1; }
   #levelToggles, #srcToggles {
     order: 2;
     overflow-x: auto;
@@ -749,8 +775,10 @@ body.resizing { user-select: none; cursor: col-resize; }
   }
   #srcToggles::-webkit-scrollbar, #levelToggles::-webkit-scrollbar { display: none; }
   #filterbar .spacer { display: none; }
-  #countLabel { order: 3; margin-left: auto; }
-  #jumpSeq { order: 4; width: 92px; }
+  /* "showing X of Y" is diagnostics; on a phone the row it costs hides logs */
+  #countLabel { display: none; }
+  #jumpSeq { order: 4; width: 76px; margin-left: auto; }
+  #clearBtn { order: 1; font-size: 12px; padding: 4px 10px; min-height: 30px; }
   .tg { padding: 5px 9px; }
 
   /* --- log rows: header line wraps, message gets the full width --- */
