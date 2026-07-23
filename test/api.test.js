@@ -48,8 +48,11 @@ test("status → feed lines → wait → summary → grep", async (t) => {
 	assert.deepEqual(st.json.ports.map((p) => p.name), ["dev"]);
 	assert.equal(st.json.ports[0].writable, false);
 
-	// wait server-side while the file grows — the primary agent verb
-	const waiting = api("/api/wait", { pattern: "Accepted", timeout: 5000 });
+	// wait server-side while the file grows — the primary agent verb.
+	// since:0 keeps this deterministic: with the default (since = current head)
+	// the wait loses whenever a slow runner lets the file poller ingest the
+	// append before this request registers — the exact race `since` exists for.
+	const waiting = api("/api/wait", { pattern: "Accepted", timeout: 5000, since: 0 });
 	fs.appendFileSync(feed, "<inf> sys: boot ok\n<err> net: socket 3 closed\nBootNotification Accepted\n");
 	const w = await waiting;
 	assert.equal(w.json.timedOut, false);
@@ -79,7 +82,7 @@ test("per-source parser config is honoured", async (t) => {
 		parsers: ["uptime-level"],
 	});
 	fs.appendFileSync(feed2, "100:INFO:mod: hi\n<inf> zeph: ignored\n");
-	const w = await api2("/api/wait", { pattern: "ignored", timeout: 5000 });
+	const w = await api2("/api/wait", { pattern: "ignored", timeout: 5000, since: 0 });
 	assert.equal(w.json.timedOut, false);
 	const lines = await api2("/api/lines?limit=10");
 	assert.equal(lines.json.lines[0].tag, "mod");
