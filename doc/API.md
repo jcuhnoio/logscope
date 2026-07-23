@@ -154,6 +154,31 @@ directory.
 → `{ "ok":true, "file":"…", "bytes":262144, "ms":41200, "seq":18422,
      "cursor":19011, …script-specific fields }`
 
+### `GET /api/devices`
+Serial adapters visible on the machine, whether or not logscope owns them.
+```json
+{ "devices": [ { "device":"/dev/cu.usbserial-A10P20H6", "label":"usbserial-A10P20H6",
+    "likely":true, "attachedAs":"charger", "configuredAs":"charger",
+    "heldBy":null } ] }
+```
+`attachedAs` = the port name currently capturing this device (null if not
+attached). `configuredAs` = the name config.json would give it. `heldBy` = the
+process holding the tty when it is not logscope (e.g. `tio (pid 6013)`).
+
+### `POST /api/attach`
+```json
+{ "name":"secc", "device":"/dev/cu.usbserial-A10P20HN", "baud":115200 }
+```
+Attaches a device as a named port, or re-opens an existing port (same name,
+new device/baud). Several ports may be attached at once, one device each;
+attaching a device that another port already owns is a 409 (`already attached
+as "…"`), not a silent swap. With `name` omitted: the source already on that
+device, else the first source. → `{ "ok":true, "ports":[…] }`
+
+### `POST /api/detach` `{ "name":"secc" }`
+Stops the named source and drops it from the port list; the session log and a
+`mark` annotation keep the record. → `{ "ok":true, "ports":[…] }`
+
 ### `GET /api/notes` → `{ "markdown":"...", "path":"..." , "mtime":... }`
 ### `PUT /api/notes` `{ "markdown":"..." }` → `{ "ok":true, "mtime":…, "bytes":… }`
 ### `PATCH /api/notes` `{ "append":"..." }` → `{ "ok":true, "mtime":…, "bytes":… }`

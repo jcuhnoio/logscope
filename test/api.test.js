@@ -158,3 +158,44 @@ test("unknown parser preset in config fails startup loudly", async (t) => {
 	);
 	await assert.rejects(() => startServer({ projectDir: proj, port: 0 }), /unknown parser preset/);
 });
+
+test("detach removes a source and marks the timeline", async (t) => {
+	const { api } = await boot(t);
+	const st0 = await api("/api/status");
+	assert.deepEqual(st0.json.ports.map((p) => p.name), ["dev"]);
+
+	const r = await api("/api/detach", { name: "dev" });
+	assert.equal(r.status, 200);
+	assert.deepEqual(r.json.ports, []);
+
+	const st1 = await api("/api/status");
+	assert.deepEqual(st1.json.ports, []);
+
+	// the detach is on the record
+	const anns = await api("/api/annotations?from=0");
+	const mark = anns.json.annotations.find((a) => a.kind === "mark" && /detached dev/.test(a.text));
+	assert.ok(mark, "detach mark annotation exists");
+
+	// detaching again, or a bogus name, is a clean 404
+	const again = await api("/api/detach", { name: "dev" });
+	assert.equal(again.status, 404);
+	const missing = await api("/api/detach", {});
+	assert.equal(missing.status, 400);
+
+	// a detached source no longer accepts sends
+	const snd = await api("/api/send", { data: "hi", port: "dev" });
+	assert.equal(snd.status, 404);
+});
+
+test("devices report the configured port name for known adapters", async (t) => {
+	// listDevices scans /dev, so only the shape is asserted — a CI box may have
+	// no adapters at all. configuredAs must at least be present on every entry.
+	const { api } = await boot(t);
+	const r = await api("/api/devices");
+	assert.equal(r.status, 200);
+	assert.ok(Array.isArray(r.json.devices));
+	for (const d of r.json.devices) {
+		assert.ok("configuredAs" in d, "device entries carry configuredAs");
+		assert.ok("attachedAs" in d, "device entries carry attachedAs");
+	}
+});

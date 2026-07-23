@@ -601,10 +601,71 @@ body.resizing { user-select: none; cursor: col-resize; }
 ::-webkit-scrollbar-thumb:hover { background: var(--fg-faint); }
 
 /* --- device picker (topbar) --- */
-.devpick { display: inline-flex; align-items: center; }
-#devSelect { max-width: 22ch; }
+.devpick { display: inline-flex; align-items: center; position: relative; }
+#devBtn {
+  font-family: var(--mono);
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #baudSelect { max-width: 9ch; }
-#devSelect option:disabled { color: var(--fg-faint); font-style: italic; }
+
+.devmenu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 60;
+  min-width: 270px;
+  max-width: 380px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / .35);
+}
+
+.devrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.devrow:hover { background: var(--bg-hover); }
+.devrow.busy { color: var(--fg-faint); cursor: default; font-style: italic; }
+.devrow.busy:hover { background: transparent; }
+
+.devck {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  line-height: 13px;
+  text-align: center;
+  border: 1px solid var(--line-2);
+  border-radius: 3px;
+  color: var(--ok);
+  font-weight: 700;
+}
+.devrow.on .devck { border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+
+.devlabel { overflow: hidden; text-overflow: ellipsis; }
+/* color + border-color come inline from srcColor(name), matching the hue the
+   log pane and source toggles use for the same port */
+.devname {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.devnote { margin-left: auto; font-size: 11px; color: var(--fg-faint); font-style: italic; }
+.devname + .devnote { margin-left: 0; }
 
 /* --- annotation author (user vs claude vs system) --- */
 .who-user   { color: var(--ok); font-weight: 600; }
@@ -645,7 +706,8 @@ body.resizing { user-select: none; cursor: col-resize; }
   #statSession, #statPorts, .statgroup .sep { display: none; }
   .statgroup { order: 5; }
   .devpick { order: 4; flex: 1 1 140px; min-width: 0; }
-  #devSelect { max-width: none; width: 100%; }
+  #devBtn { max-width: none; width: 100%; }
+  .devmenu { left: 0; right: auto; max-width: calc(100vw - 16px); }
   #baudSelect { order: 4; }
   #connState { order: 6; margin-left: auto; }
   #themeBtn { order: 7; }

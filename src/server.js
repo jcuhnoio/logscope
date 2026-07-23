@@ -178,7 +178,7 @@ async function handle(req, res, ctx) {
 
 	// ---- device discovery ----
 	if (p === "/api/devices") {
-		return send(res, 200, { devices: listDevices(sources) });
+		return send(res, 200, { devices: listDevices(sources, cfg) });
 	}
 
 	// ---- lines ----
@@ -323,13 +323,27 @@ async function handle(req, res, ctx) {
 
 	// ---- attach/switch a serial device at runtime ----
 	if (p === "/api/attach") {
-		// Default to replacing the first (usually only) serial source rather than
-		// inventing a name — a hardcoded default here would silently create a
-		// second source instead of switching the one being looked at.
-		const name = body.name ?? [...sources.keys()][0] ?? "device";
 		const device = body.device;
 		if (!device) return send(res, 400, { error: "device is required" });
 		const baud = num(body.baud, 115200);
+
+		// Name resolution, in order: explicit > the source already on this device
+		// (re-attach / baud change) > the first source (legacy single-port
+		// clients) > "device". Never invent a fresh name for an unnamed request —
+		// that would silently create a second source instead of switching the one
+		// being looked at.
+		const sameDevice = [...sources.values()].find((s) => s.status().device === device);
+		const name = body.name ?? sameDevice?.name ?? [...sources.keys()][0] ?? "device";
+
+		// One device, one name. Attaching an already-owned device under a second
+		// name would steal the fd and leave the first source endlessly retrying —
+		// the "my ports swapped" failure mode.
+		if (sameDevice && sameDevice.name !== name) {
+			return send(res, 409, {
+				error: `${device} is already attached as "${sameDevice.name}"`,
+				ports: status(store, sources, cfg).ports,
+			});
+		}
 
 		const prev = sources.get(name);
 		if (prev) {
@@ -375,6 +389,23 @@ async function handle(req, res, ctx) {
 		return send(res, 200, { ok: true, ports: status(store, sources, cfg).ports });
 	}
 
+	// ---- detach a source at runtime ----
+	if (p === "/api/detach") {
+		const name = body.name;
+		if (!name) return send(res, 400, { error: "name is required" });
+		const src = sources.get(name);
+		if (!src) return send(res, 404, { error: `no such source: ${name}` });
+		src.stop();
+		sources.delete(name);
+		store.addAnnotation({
+			kind: "mark",
+			author: body.author ?? "user",
+			text: `detached ${name}`,
+			meta: { label: `⏏ ${name}`, port: name },
+		});
+		return send(res, 200, { ok: true, ports: status(store, sources, cfg).ports });
+	}
+
 	if (p === "/api/notes" && (req.method === "PUT" || req.method === "PATCH")) {
 		const cur = fs.existsSync(cfg._notes) ? fs.readFileSync(cfg._notes, "utf8") : "";
 		const next =
@@ -404,11 +435,18 @@ const DEV_SKIP = /Bluetooth|debug-console|wlan-debug/i;
 // flagged, rather than hidden, in case someone genuinely uses an odd adapter.
 const DEV_LIKELY = /usbserial|usbmodem|SLAB|wchusb|ftdi|UART/i;
 
-function listDevices(sources) {
+function listDevices(sources, cfg) {
 	const inUse = new Map();
 	for (const s of sources.values()) {
 		const st = s.status();
 		if (st.type === "serial") inUse.set(st.device, st.name);
+	}
+
+	// The port name this device *would* get on attach, from config.json — shown
+	// in the picker so "which adapter is the secc again?" answers itself.
+	const confNames = new Map();
+	for (const s of cfg?.sources ?? []) {
+		if (s.device && s.type !== "file") confNames.set(s.device, s.name);
 	}
 
 	const out = [];
@@ -427,6 +465,7 @@ function listDevices(sources) {
 				label: n.replace(/^cu\./, ""),
 				likely: DEV_LIKELY.test(n),
 				attachedAs: inUse.get(full) ?? null,
+				configuredAs: confNames.get(full) ?? null,
 				heldBy: inUse.has(full) ? null : whoHolds(full),
 			});
 		}

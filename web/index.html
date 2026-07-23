@@ -23,10 +23,12 @@
 
   <div class="spacer"></div>
 
-  <label class="devpick" title="serial device to monitor">
-    <select id="devSelect" class="inp sel"></select>
-  </label>
-  <select id="baudSelect" class="inp sel" title="baud rate">
+  <div class="devpick" id="devPick">
+    <button id="devBtn" class="btn" type="button"
+            title="attach / detach serial devices">no device ▾</button>
+    <div id="devMenu" class="devmenu" hidden></div>
+  </div>
+  <select id="baudSelect" class="inp sel" title="baud rate — applies to the next attach; with one port attached, changing it re-opens that port">
     <option>9600</option><option>19200</option><option>38400</option>
     <option>57600</option><option selected>115200</option>
     <option>230400</option><option>460800</option><option>921600</option>
@@ -66,6 +68,8 @@
       <span id="countLabel" class="count">showing 0 of 0</span>
       <input id="jumpSeq" class="inp seqinp" type="text" inputmode="numeric"
              spellcheck="false" placeholder="seq →" title="jump to seq">
+      <button id="clearBtn" class="btn ghost" type="button"
+              title="clear the log view — history stays on the daemon">clear</button>
     </div>
 
     <div id="logScroll">

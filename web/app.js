@@ -117,6 +117,7 @@ const state = {
 	head: 0,                // server head
 	seqSeen: new Set(),     // seqs currently held in `items`
 	dropCutoff: 0,          // every seq <= this was rendered and then trimmed away
+	clearCutoff: 0,         // user hit clear: annotations anchored <= this are gone too
 	annIds: new Set(),      // annotation ids ever ingested (incl. reconciled temps)
 
 	items: [],              // merged, ordered [{type,seq,t,id,data,el,vis}]
@@ -133,11 +134,14 @@ const state = {
 	visLines: 0,            // ...of which pass the filter
 
 	autoScroll: true,
+	annStick: true,         // side-list mirror of autoScroll; the flag survives
+	                        // display:none, where scrollTop does not
 	newCount: 0,
 
 	rate: [],               // recent line arrival timestamps
 	sessionId: null,
 	ports: [],
+	devices: [],            // last /api/devices payload, for the picker menu
 	devSig: null,           // last-rendered device list signature
 
 	esConnected: false,
@@ -160,7 +164,8 @@ const el = {
 	statPorts: $('#statPorts'),
 	statSess:  $('#statSession'),
 	cmdPort:   $('#cmdPort'),
-	devSelect: $('#devSelect'),
+	devBtn:    $('#devBtn'),
+	devMenu:   $('#devMenu'),
 	baudSelect: $('#baudSelect'),
 	cmdText:   $('#cmdText'),
 	cmdBar:    $('#cmdbar'),
@@ -367,8 +372,7 @@ function renderAnn(a) {
 
 /* ══════════════════════════ insert / trim / scroll ══════════════════════════ */
 
-function isAtBottom() {
-	const s = el.scroll;
+function isAtBottom(s = el.scroll) {
 	return s.scrollHeight - s.scrollTop - s.clientHeight <= BOTTOM_SLACK;
 }
 
@@ -489,6 +493,13 @@ function findPendingMatch(a) {
 function ingestAnnotation(a) {
 	if (!a || a.id == null) return false;
 	if (state.annIds.has(a.id)) return false;
+
+	// Anchored inside a range the user cleared: it went with its lines, and a
+	// refetch (gap fill re-reads ALL annotations) must not resurrect it.
+	if (typeof a.seq === 'number' && a.seq <= state.clearCutoff) {
+		state.annIds.add(a.id);
+		return false;
+	}
 
 	// reconcile an optimistic render with the server's authoritative copy
 	const pi = findPendingMatch(a);
@@ -685,6 +696,15 @@ function applyStatus(st) {
 			if (names.includes(cur)) el.cmdPort.value = cur;
 		}
 		for (const p of st.ports) noteSource(p.name);
+
+		const serial = st.ports.filter(p => p.type === 'serial');
+		el.devBtn.textContent = (serial.length
+			? serial.map(p => p.name).join(' · ')
+			: 'no device') + ' ▾';
+		// mirror the attached baud only while it is unambiguous
+		if (serial.length === 1 && serial[0].baud && document.activeElement !== el.baudSelect) {
+			el.baudSelect.value = String(serial[0].baud);
+		}
 	}
 }
 
@@ -695,57 +715,119 @@ async function pollStatus() {
 /* ── device picker ─────────────────────────────────────────────────────── */
 
 /**
- * Rebuild the device dropdown. Ports already attached and ports held by another
- * process are both shown — the second kind disabled and labelled with the
+ * The picker is a checklist, not a <select>: several devices can be attached
+ * at once, each as its own named port, and toggling a row attaches/detaches
+ * that device only. It never re-targets another port's name — the old
+ * single-select always attached under the *first* port's name, which is what
+ * used to swap a second adapter onto the wrong port.
+ *
+ * Ports held by another process are shown too, disabled and labelled with the
  * culprit, because "my adapter isn't in the list" is a far worse experience
  * than "my adapter is listed as busy with tio".
  */
 async function refreshDevices() {
 	let devices;
 	try { ({ devices } = await api('/api/devices')); } catch (e) { return; }
-
-	const attached = (state.ports.find(p => p.type === 'serial') || {}).device || '';
-	const sig = devices.map(d => `${d.device}|${d.attachedAs}|${d.heldBy}`).join(',') + '#' + attached;
-	if (sig === state.devSig) return;          // nothing changed; don't stomp an open menu
+	state.devices = devices;
+	const sig = devices.map(d => `${d.device}|${d.attachedAs}|${d.configuredAs}|${d.heldBy}`).join(',');
+	if (sig === state.devSig) return;          // nothing changed; don't stomp the menu
 	state.devSig = sig;
-
-	el.devSelect.innerHTML = devices.map(d => {
-		const busy = d.heldBy && !d.attachedAs;
-		const note = d.attachedAs ? ' ✓' : busy ? ` — busy: ${d.heldBy}` : d.likely ? '' : ' (bt)';
-		return `<option value="${esc(d.device)}"${busy ? ' disabled' : ''}` +
-			`${d.device === attached ? ' selected' : ''}>${esc(d.label + note)}</option>`;
-	}).join('') || '<option value="">no serial devices</option>';
-
-	if (attached) el.devSelect.value = attached;
-	const baud = (state.ports.find(p => p.device === attached) || {}).baud;
-	if (baud) el.baudSelect.value = String(baud);
+	renderDevMenu();
 }
 
-async function attachDevice() {
-	const device = el.devSelect.value;
-	if (!device) return;
-	const baud = Number(el.baudSelect.value) || 115200;
-	const name = (state.ports.find(p => p.type === 'serial') || {}).name || 'charger';
+function renderDevMenu() {
+	el.devMenu.innerHTML = (state.devices || []).map(d => {
+		const busy = d.heldBy && !d.attachedAs;
+		const on = !!d.attachedAs;
+		// live name wins; otherwise the name config.json would give this device
+		const name = d.attachedAs || d.configuredAs;
+		// same hue the log pane gives this source, so badge and log column match
+		const nameStyle = name
+			? ` style="color:${srcColor(name)};border-color:color-mix(in srgb, ${srcColor(name)} 45%, transparent)"`
+			: '';
+		return `<div class="devrow${busy ? ' busy' : ''}${on ? ' on' : ''}" data-device="${esc(d.device)}"` +
+			` title="${esc(d.device)}">` +
+			`<span class="devck">${on ? '✓' : ''}</span>` +
+			`<span class="devlabel">${esc(d.label)}</span>` +
+			(name ? `<span class="devname"${nameStyle}>${esc(name)}</span>` : '') +
+			(busy ? `<span class="devnote">busy: ${esc(d.heldBy)}</span>` :
+				(!d.likely && !on) ? `<span class="devnote">bt</span>` : '') +
+			`</div>`;
+	}).join('') || `<div class="devrow busy">no serial devices</div>`;
+}
 
-	el.devSelect.disabled = el.baudSelect.disabled = true;
-	setConn('retry', `opening ${device.replace(/^\/dev\/cu\./, '')}…`);
+let devToggling = false;
+
+async function toggleDevice(device) {
+	const d = (state.devices || []).find(x => x.device === device);
+	if (!d || devToggling || (d.heldBy && !d.attachedAs)) return;
+	devToggling = true;
 	try {
-		const r = await jpost('/api/attach', { name, device, baud });
-		if (r.ports) applyStatus({ ports: r.ports });
-		setConn('live', 'live');
+		if (d.attachedAs) {
+			const r = await jpost('/api/detach', { name: d.attachedAs, author: 'user' });
+			if (r.ports) applyStatus({ ports: r.ports });
+		} else {
+			setConn('retry', `opening ${d.label}…`);
+			const r = await jpost('/api/attach', {
+				name: d.configuredAs || d.label.replace(/[^\w.-]+/g, '-'),
+				device: d.device,
+				baud: Number(el.baudSelect.value) || 115200,
+				author: 'user',
+			});
+			if (r.ports) applyStatus({ ports: r.ports });
+			setConn(state.esConnected ? 'live' : 'down', state.esConnected ? 'live' : 'offline');
+		}
 	} catch (e) {
-		// The daemon keeps retrying in the background, so this is informational
-		// rather than fatal — but say it out loud instead of silently reverting.
+		// The daemon keeps retrying attaches in the background, so this is
+		// informational rather than fatal — but say it out loud.
 		setConn('down', String(e.message || e));
+		setTimeout(() => setConn(state.esConnected ? 'live' : 'down',
+			state.esConnected ? 'live' : 'offline'), 3000);
 	} finally {
-		el.devSelect.disabled = el.baudSelect.disabled = false;
+		devToggling = false;
 		state.devSig = null;
 		refreshDevices();
 	}
 }
 
-el.devSelect.addEventListener('change', attachDevice);
-el.baudSelect.addEventListener('change', attachDevice);
+el.devMenu.addEventListener('click', (e) => {
+	const row = e.target.closest('.devrow');
+	if (row && row.dataset.device) toggleDevice(row.dataset.device);
+});
+
+el.devBtn.addEventListener('click', (e) => {
+	e.stopPropagation();
+	el.devMenu.hidden = !el.devMenu.hidden;
+	if (!el.devMenu.hidden) { state.devSig = null; refreshDevices(); }
+});
+
+// click anywhere else closes the menu
+document.addEventListener('click', (e) => {
+	if (!el.devMenu.hidden && !(e.target.closest && e.target.closest('#devPick'))) {
+		el.devMenu.hidden = true;
+	}
+});
+
+// Baud applies to the next attach. With exactly one port attached, changing it
+// re-opens that port at the new rate — the common "wrong baud, fix it" move.
+// With several attached it stays hands-off: guessing which port to bounce
+// would be the swap bug all over again.
+el.baudSelect.addEventListener('change', async () => {
+	const serial = state.ports.filter(p => p.type === 'serial' && p.device);
+	if (serial.length !== 1) return;
+	const p = serial[0];
+	try {
+		const r = await jpost('/api/attach', {
+			name: p.name, device: p.device,
+			baud: Number(el.baudSelect.value) || 115200, author: 'user',
+		});
+		if (r.ports) applyStatus({ ports: r.ports });
+	} catch (e) {
+		setConn('down', String(e.message || e));
+	}
+	state.devSig = null;
+	refreshDevices();
+});
 
 /* line-rate meter */
 function markRate() { state.rate.push(Date.now()); }
@@ -932,7 +1014,12 @@ function renderAnnList() {
 	}
 	el.annList.innerHTML = rows.join('') || `<div class="empty">no annotations</div>`;
 	el.annCount.textContent = `${shown} / ${state.anns.length}`;
+	if (state.annStick) el.annList.scrollTop = el.annList.scrollHeight;
 }
+
+el.annList.addEventListener('scroll', () => {
+	state.annStick = isAtBottom(el.annList);
+});
 
 el.annFilter.addEventListener('input', renderAnnList);
 el.annList.addEventListener('click', (e) => {
@@ -1275,6 +1362,36 @@ el.jump.addEventListener('keydown', (e) => {
 
 /* ══════════════════════════ log interactions ══════════════════════════ */
 
+/**
+ * Clear the log view. Client-side only: the daemon's store and JSONL are
+ * untouched, so `logscope` queries and a page reload still see full history.
+ * Raising dropCutoff to head is what makes this stick — gap-fill and SSE
+ * replay would otherwise repopulate everything on the next reconnect.
+ */
+function clearLog() {
+	flush();          // drain anything queued this frame so it can't resurface
+	if (state.head > state.dropCutoff) state.dropCutoff = state.head;
+	state.clearCutoff = state.head;
+	closeComposer();
+	for (const it of state.items) it.el.remove();
+	state.items = [];
+	state.seqSeen.clear();
+	state.totalLines = 0;
+	state.visLines = 0;
+	state.newCount = 0;
+	el.pill.hidden = true;
+	state.autoScroll = true;
+	updateCount();
+	// Annotations anchored to cleared lines are cleared with them — from the
+	// side list too. Their ids stay in annIds so a refetch can't bring them
+	// back. (null-seq guard: null <= n is true in JS.)
+	state.anns = state.anns.filter(a => !(typeof a.seq === 'number' && a.seq <= state.clearCutoff));
+	state.pendingAnns = state.pendingAnns.filter(p => p.seq > state.clearCutoff);
+	renderAnnList();
+}
+
+$('#clearBtn').addEventListener('click', clearLog);
+
 el.list.addEventListener('click', (e) => {
 	const act = e.target.dataset && e.target.dataset.act;
 	const row = e.target.closest('.ln');
@@ -1404,6 +1521,7 @@ window.addEventListener('keydown', (e) => {
 	const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 
 	if (e.key === 'Escape') {
+		if (!el.devMenu.hidden) { el.devMenu.hidden = true; return; }
 		if (composer.node) { closeComposer(); return; }
 		if (typing && t === el.filter) { el.filter.value = ''; buildFilter(''); refilter(); el.filter.blur(); return; }
 		if (typing) { t.blur(); return; }
