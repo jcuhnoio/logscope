@@ -13,7 +13,27 @@ import { spawn } from "node:child_process";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, "..");
-const PORT = Number(process.env.LOGSCOPE_PORT || 7717);
+// Port resolution: LOGSCOPE_PORT wins; otherwise the nearest project config
+// (cwd upward) decides, so `logscope status` inside a project with
+// "port": 7718 talks to that project's daemon; 7717 is the last resort.
+function projectPort() {
+	if (process.env.LOGSCOPE_PORT) return Number(process.env.LOGSCOPE_PORT);
+	for (let dir = process.cwd(); ; ) {
+		const f = path.join(dir, ".logscope", "config.json");
+		if (fs.existsSync(f)) {
+			try {
+				const p = JSON.parse(fs.readFileSync(f, "utf8")).port;
+				if (p) return Number(p);
+			} catch {}
+			break;
+		}
+		const up = path.dirname(dir);
+		if (up === dir) break;
+		dir = up;
+	}
+	return 7717;
+}
+const PORT = projectPort();
 const BASE = `http://127.0.0.1:${PORT}`;
 
 const argv = process.argv.slice(2);
@@ -87,6 +107,13 @@ function fmtLine(l, { seq = true, src = false } = {}) {
 	return parts.join(" ");
 }
 
+// `logscope grep | head` closes our stdout mid-write; that's normal shell
+// plumbing, not an error worth a stack trace.
+process.stdout.on("error", (e) => {
+	if (e.code === "EPIPE") process.exit(0);
+	throw e;
+});
+
 const printLines = (lines, opts) => {
 	for (const l of lines) process.stdout.write(fmtLine(l, opts) + "\n");
 };
@@ -138,12 +165,18 @@ const COMMANDS = {
 			process.stdout.write(`logscope started (pid ${child.pid}) → ${BASE}\n`);
 			return;
 		}
-		const s = await startServer({ projectDir: project, port: PORT });
+		// Let the project's own config pick the port unless LOGSCOPE_PORT is
+		// set — PORT here is derived from *cwd*, which may be a different
+		// project than --project.
+		const s = await startServer({
+			projectDir: project,
+			port: process.env.LOGSCOPE_PORT ? PORT : undefined,
+		});
 		const ports = s.sources.size
 			? [...s.sources.values()].map((x) => `${x.name}${x.status().connected ? "" : " (down)"}`).join(", ")
 			: "none configured — add sources to .logscope/config.json";
 		process.stdout.write(
-			`logscope ${BASE}\n  project ${project}\n  session ${s.store.sessionId}\n  sources ${ports}\n`
+			`logscope http://127.0.0.1:${s.port}\n  project ${project}\n  session ${s.store.sessionId}\n  sources ${ports}\n`
 		);
 	},
 
