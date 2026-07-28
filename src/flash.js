@@ -66,6 +66,10 @@ export async function flashFirmware({ port, file, store, cfg, opts = {} }) {
 	const author = opts.author ?? "claude";
 	const note = (kind, text, meta = {}) =>
 		store.addAnnotation({ kind, author, text, meta: { flash: true, ...meta } });
+	// Rewrite a previous note in place (progress lines). Returns null for an
+	// unknown id so scripts can degrade to a fresh note.
+	note.update = (id, text, meta = {}) =>
+		store.updateAnnotation(id, { text, meta: { flash: true, ...meta } });
 
 	// Mirror the device's own words into the log, so the handshake is on the
 	// record rather than hidden inside the script.

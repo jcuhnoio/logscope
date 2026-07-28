@@ -490,9 +490,33 @@ function findPendingMatch(a) {
 		p.seq === a.seq && p.kind === a.kind && p.text === a.text);
 }
 
+/**
+ * An annotation event for an id we already rendered: an in-place update
+ * (self-rewriting progress notes, e.g. XMODEM flash chunks) — replace the
+ * rendered element and the side-tab copy. `edited` distinguishes a real
+ * update from the same record re-delivered by a backlog refetch.
+ */
+function applyAnnotationUpdate(a) {
+	const it = state.items.find(x => x.type === 'ann' && x.id === a.id);
+	const cur = it?.data ?? state.anns.find(x => x.id === a.id);
+	if (!cur || (a.edited ?? 0) <= (cur.edited ?? 0)) return false;
+	if (it) {
+		it.data = a;
+		const fresh = renderAnn(a);
+		it.el.replaceWith(fresh);
+		it.el = fresh;
+		it.vis = itemVisible(it);
+		it.el.hidden = !it.vis;
+	}
+	const ai = state.anns.findIndex(x => x.id === a.id);
+	if (ai >= 0) state.anns[ai] = a;
+	queueAnnListRender();
+	return true;
+}
+
 function ingestAnnotation(a) {
 	if (!a || a.id == null) return false;
-	if (state.annIds.has(a.id)) return false;
+	if (state.annIds.has(a.id)) return applyAnnotationUpdate(a);
 
 	// Anchored inside a range the user cleared: it went with its lines, and a
 	// refetch (gap fill re-reads ALL annotations) must not resurrect it.

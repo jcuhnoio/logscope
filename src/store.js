@@ -86,6 +86,26 @@ export class Store {
 		return rec;
 	}
 
+	/**
+	 * Rewrite an existing annotation in place. The anchor (seq) never moves —
+	 * this exists for progress that would otherwise spam the timeline (an
+	 * XMODEM flash rewriting "chunk 2/5: 43%" beats forty stacked notes).
+	 * The updated record is re-appended to annotations.jsonl (last writer
+	 * wins on replay) and re-emitted on the same "annotation" event; clients
+	 * use `edited` to tell an update from a duplicate.
+	 */
+	updateAnnotation(id, { text, kind, meta } = {}) {
+		const rec = this.annotations.find((a) => a.id === id);
+		if (!rec) return null;
+		if (text != null) rec.text = text;
+		if (kind != null) rec.kind = kind;
+		if (meta != null) rec.meta = { ...rec.meta, ...meta };
+		rec.edited = Date.now();
+		this.annFile.write(JSON.stringify(rec) + "\n");
+		this.#emit("annotation", rec);
+		return rec;
+	}
+
 	// ---- queries ---------------------------------------------------------
 
 	#inMem(seq) {

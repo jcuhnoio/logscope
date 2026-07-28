@@ -359,7 +359,12 @@ const COMMANDS = {
 
 	async note() {
 		const text = flags.text ?? rest.join(" ");
-		if (!text) die('usage: logscope note "<text>" [--seq N] [--kind note|analysis]');
+		if (!text) die('usage: logscope note "<text>" [--seq N] [--kind note|analysis] [--update ID]');
+		if (flags.update) {
+			const a = await api("/api/annotate", { id: flags.update, text, kind: flags.kind });
+			process.stdout.write(`updated ${a.id} @${a.seq}\n`);
+			return;
+		}
 		const a = await api("/api/annotate", {
 			seq: flags.seq != null ? Number(flags.seq) : null,
 			kind: flags.kind ?? "note",

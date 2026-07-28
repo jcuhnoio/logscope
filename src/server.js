@@ -249,6 +249,11 @@ async function handle(req, res, ctx) {
 	}
 
 	if (p === "/api/annotate") {
+		if (body.id != null) {
+			const upd = store.updateAnnotation(body.id, body);
+			if (!upd) return send(res, 404, { error: `no such annotation: ${body.id}` });
+			return send(res, 200, upd);
+		}
 		if (!body.text) return send(res, 400, { error: "text is required" });
 		return send(res, 200, store.addAnnotation(body));
 	}
