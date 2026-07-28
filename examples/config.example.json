@@ -16,6 +16,12 @@
       "type": "file",
       "file": "~/logs/server.log",
       "from": "end"
+    },
+    {
+      "_comment": "Optional third input — spawn a command and ingest stdout (remote device over ssh, adb logcat, a packet decoder). Supervised: respawns with backoff on exit. Set writable:true to connect stdin to `send`.",
+      "name": "remote",
+      "type": "exec",
+      "cmd": "ssh device 'journalctl -f -u app'"
     }
   ],
 

@@ -31,12 +31,20 @@ every line.
 ```json
 { "name": "board",  "type": "serial", "device": "/dev/cu.usbserial-XXXX", "baud": 115200 }
 { "name": "server", "type": "file",   "file": "~/logs/server.log", "from": "end" }
+{ "name": "remote", "type": "exec",   "cmd": "ssh pi 'journalctl -f -u app'" }
 ```
 
 - `serial` — logscope owns the tty exclusively; readable *and* writable
   (`logscope send`, `/api/send`, flashing).
 - `file` — `tail -F`-style follow; read-only, coexists with whatever writes
   the file. `from`: `"end"` (default, only new output) or `"start"` (replay).
+- `exec` — spawns `cmd` (via `sh -c`) and ingests its stdout; stderr joins the
+  timeline as `err` lines (an ssh "connection refused" is exactly the line
+  that explains the gap after it). The child is supervised: on exit it is
+  respawned with capped backoff (1s→30s, reset once output flows), and
+  up/down transitions land as system marks. Options: `restart` (default
+  `true`), `writable` (default `false` — set `true` to connect the child's
+  stdin to `send`, e.g. an interactive remote console).
 
 A source may carry its own `parsers` and/or `rules`, overriding/extending the
 global ones below. Sources do **not** hot-reload — re-opening a tty

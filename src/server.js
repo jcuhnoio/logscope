@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { Store } from "./store.js";
 import { SerialPort, probeDevice } from "./serial.js";
 import { FileSource } from "./filesource.js";
+import { ExecSource } from "./execsource.js";
 import { compileRules, makeParser } from "./parse.js";
 import { whoHolds } from "./holder.js";
 import { flashFirmware } from "./flash.js";
@@ -101,7 +102,9 @@ export async function startServer({ projectDir, port }) {
 		const src =
 			s.type === "file"
 				? new FileSource({ ...s, parse }, store)
-				: new SerialPort({ ...s, parse }, store);
+				: s.type === "exec"
+					? new ExecSource({ ...s, parse }, store)
+					: new SerialPort({ ...s, parse }, store);
 		sources.set(s.name, src);
 		await src.start();
 	}
