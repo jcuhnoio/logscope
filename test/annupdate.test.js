@@ -73,6 +73,7 @@ test("store journal replays to the updated text (last writer wins)", async (t) =
 	const { api, s } = await boot(t);
 	const created = await api("/api/annotate", { text: "v1" });
 	await api("/api/annotate", { id: created.json.id, text: "v2" });
+	await s.store.flush(); // the journal is a write stream; the reply can beat the disk
 
 	const file = fs.readFileSync(
 		path.join(s.store.dir, "annotations.jsonl"),

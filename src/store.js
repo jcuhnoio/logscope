@@ -296,6 +296,18 @@ export class Store {
 		}
 	}
 
+	/**
+	 * Resolves once every record written so far has reached the OS. The
+	 * journals go through write streams, so a caller that replies to a client
+	 * and then reads the file back (tests, `logscope export`) can otherwise
+	 * observe a truncated journal. A zero-length write is queued behind all
+	 * pending chunks, so its callback doubles as a barrier.
+	 */
+	flush() {
+		const barrier = (ws) => new Promise((r) => ws.write("", () => r()));
+		return Promise.all([barrier(this.linesFile), barrier(this.annFile)]);
+	}
+
 	/** Resolves once both JSONL streams have flushed to disk. */
 	close() {
 		return Promise.all([

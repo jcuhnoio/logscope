@@ -112,19 +112,14 @@ test("wait respects src filter and times out cleanly", async (t) => {
 	assert.equal(r.cursor, s.head);
 });
 
-test("lines persist as JSONL on disk", (t) => {
+test("lines persist as JSONL on disk", async (t) => {
 	const s = mkStore(t);
 	s.addLine({ src: "d", raw: "persisted" });
-	// createWriteStream is async; give it a beat
-	return new Promise((resolve) => {
-		setTimeout(() => {
-			const txt = fs.readFileSync(path.join(s.dir, "lines.jsonl"), "utf8");
-			const rec = JSON.parse(txt.trim());
-			assert.equal(rec.raw, "persisted");
-			assert.equal(rec.seq, 1);
-			resolve();
-		}, 100);
-	});
+	await s.flush(); // the journal is a write stream
+	const txt = fs.readFileSync(path.join(s.dir, "lines.jsonl"), "utf8");
+	const rec = JSON.parse(txt.trim());
+	assert.equal(rec.raw, "persisted");
+	assert.equal(rec.seq, 1);
 });
 
 test("subscribe fans out and unsubscribes", (t) => {
