@@ -40,7 +40,17 @@ class FakeEl {
 	}
 	get innerHTML() { return this._html; }
 	set innerHTML(v) { this._html = String(v); this.children = []; }
-	appendChild(c) { c.remove(); c.parentNode = this; this.children.push(c); return c; }
+	appendChild(c) {
+		if (c.tagName === "#FRAGMENT") {
+			for (const k of [...c.children]) this.appendChild(k);
+			return c;
+		}
+		c.remove(); c.parentNode = this; this.children.push(c); return c;
+	}
+	replaceChildren(...nodes) {
+		for (const c of [...this.children]) c.remove();
+		for (const n of nodes) this.appendChild(n);
+	}
 	insertBefore(c, ref) {
 		c.remove(); c.parentNode = this;
 		const i = this.children.indexOf(ref);
@@ -112,6 +122,7 @@ function installShim() {
 		querySelector: getEl,
 		querySelectorAll: () => [],
 		createElement: (tag) => new FakeEl(tag),
+		createDocumentFragment: () => new FakeEl("#fragment"),
 		documentElement: new FakeEl("html"),
 		body: new FakeEl("body"),
 		activeElement: null,

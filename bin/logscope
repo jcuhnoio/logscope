@@ -333,12 +333,13 @@ const COMMANDS = {
 	async flash() {
 		const file = flags.file ?? rest[0];
 		if (!file) {
-			die("usage: logscope flash <image-file> [--port NAME] [--no-reboot] [--no-reset]");
+			die("usage: logscope flash <image-file> [--port NAME] [--pin] [--no-reboot] [--no-reset]");
 		}
 		process.stdout.write(`flashing ${file} …\n`);
 		const r = await api("/api/flash", {
 			file,
 			port: flags.port ?? null,
+			pin: Boolean(flags.pin),
 			reboot: !flags["no-reboot"],
 			resetAfter: !flags["no-reset"],
 			author: flags.author ?? "claude",
@@ -424,7 +425,8 @@ act:
   send  "TEXT" [--port NAME] [--wait RE] [--timeout S]
                                             write to the device; optionally block
                                             for the reply. auto-annotates.
-  flash <image-file> [--port NAME] [--no-reboot] [--no-reset]
+  flash <image-file> [--port NAME] [--pin] [--no-reboot] [--no-reset]
+                       (--pin: legacy bootloader-pin rescue — 11_LG units: verify/restore TID after)
                                             run the project's flash script
                                             (.logscope/scripts/, flash.script in
                                             config.json) over the port logscope

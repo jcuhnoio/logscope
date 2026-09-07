@@ -275,7 +275,7 @@ async function handle(req, res, ctx) {
 		const name = body.port ?? [...sources.keys()][0];
 		const src = sources.get(name);
 		if (!src) return send(res, 404, { error: `no such source: ${name}` });
-		const nl = body.newline ?? "\r\n";
+		const nl = body.newline ?? src.eol ?? "\r\n";
 		const at = store.head;
 		try {
 			src.write(String(body.data ?? "") + nl);

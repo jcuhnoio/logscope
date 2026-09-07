@@ -358,6 +358,8 @@ body.resizing { user-select: none; cursor: col-resize; }
 .an.k-mark::before, .an.k-mark::after {
   content: "";
   flex: 1 1 auto;
+  /* a long label may wrap, but the rules never vanish entirely */
+  min-width: 16px;
   height: 1px;
   background: var(--line-2);
 }
@@ -366,7 +368,9 @@ body.resizing { user-select: none; cursor: col-resize; }
   font-size: 11px;
   letter-spacing: .12em;
   text-transform: uppercase;
-  white-space: nowrap;
+  text-align: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* run = collapsible */

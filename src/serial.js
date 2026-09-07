@@ -77,12 +77,17 @@ export function probeDevice(device) {
 }
 
 export class SerialPort {
-	constructor({ name, device, baud = 115200, parse = parseLine }, store) {
+	constructor({ name, device, baud = 115200, parse = parseLine, eol }, store) {
 		this.name = name;
 		this.device = device;
 		this.baud = baud;
 		this.parse = parse;
 		this.store = store;
+		// Line terminator appended to `send` writes. Some firmware shells read a
+		// command on CR and choke on a trailing LF (it lands as an empty second
+		// line, or gets buffered into the next command); those want "\r", like
+		// tio's default. Config: source-level `"eol"`. Falls back to CRLF.
+		this.eol = eol ?? "\r\n";
 
 		this.fd = null;
 		this.buf = Buffer.allocUnsafe(READ_BUF);

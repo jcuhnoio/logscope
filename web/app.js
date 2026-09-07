@@ -419,30 +419,117 @@ function trim(atBottom) {
 	if (composer.node && composer.anchorEl && !composer.anchorEl.isConnected) closeComposer();
 }
 
-/* Incoming items are buffered and flushed once per frame so a burst of
- * thousands of lines costs one layout, not thousands. */
+/* Incoming items are buffered and flushed in batches. The cadence is
+ * self-pacing: after a flush that took D ms, the next one waits ~3×D, so a
+ * firehose produces fewer, larger batches and the browser always gets time to
+ * paint a complete frame in between — instead of 60 half-built ones. */
 let flushQueued = false;
+let lastFlushEnd = 0;
+let lastFlushDur = 0;
+let lastFlushBatch = 0;
 const inbox = [];
 
 function enqueue(it) {
 	inbox.push(it);
-	if (!flushQueued) {
+	scheduleFlush();
+}
+
+function scheduleFlush() {
+	if (flushQueued) return;
+	flushQueued = true;
+	requestAnimationFrame(flushTick);
+}
+
+function flushTick() {
+	flushQueued = false;
+	// Pace only after a genuinely heavy flush — a big batch that also took long
+	// enough to drop frames. Light traffic keeps flushing every frame with no
+	// added latency, and a one-off slow flush (cold start) never triggers it.
+	const pace = (lastFlushBatch > 200 && lastFlushDur > 8)
+		? Math.min(300, lastFlushDur * 3) : 0;
+	const wait = lastFlushEnd + pace - performance.now();
+	if (wait > 1) {
 		flushQueued = true;
-		requestAnimationFrame(flush);
+		setTimeout(flushTick, wait);
+		return;
 	}
+	flush();
 }
 
 function flush() {
 	flushQueued = false;
 	if (!inbox.length) return;
+	const t0 = performance.now();
+	lastFlushBatch = inbox.length;
 	const atBottom = state.autoScroll && isAtBottom();
 	let newLines = 0;
 
+	// A burst larger than the DOM cap would insert thousands of rows only for
+	// trim() to delete them this same frame. Drop the excess oldest lines here,
+	// before any element exists, with the same bookkeeping trim() would do.
+	let lineCount = 0;
+	for (const it of inbox) if (it.type === 'line') lineCount++;
+	if (lineCount > MAX_ITEMS) {
+		let drop = lineCount - MAX_ITEMS;
+		newLines += drop;               // they still count as arrived for the pill
+		const kept = [];
+		for (const it of inbox) {
+			if (drop > 0 && it.type === 'line') {
+				drop--;
+				state.seqSeen.delete(it.seq);
+				if (it.seq > state.dropCutoff) state.dropCutoff = it.seq;
+			} else {
+				kept.push(it);
+			}
+		}
+		inbox.length = 0;
+		inbox.push(...kept);
+	}
+
+	// The batch alone fills the whole window: everything on screen is about to
+	// be trimmed anyway. Evict it in ONE DOM operation instead of item-by-item
+	// removes + inserts — the pane goes from one complete state to the next
+	// with no half-built frame in between.
+	if (inbox.length >= MAX_ITEMS && state.items.length) {
+		for (const it of state.items) {
+			if (it.type === 'line') {
+				state.seqSeen.delete(it.seq);
+				if (it.seq > state.dropCutoff) state.dropCutoff = it.seq;
+			}
+		}
+		state.items = [];
+		state.totalLines = 0;
+		state.visLines = 0;
+		el.list.replaceChildren();
+		if (composer.node) closeComposer();
+	}
+
+	// Fast path: a burst is almost always seq-ascending, so runs of items that
+	// sort after the current tail are batched into one fragment and appended
+	// with a single DOM operation. Out-of-order items fall back to insertItem.
+	let frag = null;
 	for (const it of inbox) {
-		insertItem(it);
+		if (!it.el) it.el = it.type === 'line' ? renderLine(it.data) : renderAnn(it.data);
+		const tail = state.items[state.items.length - 1];
+		if (!tail || cmpItems(tail, it) <= 0) {
+			it.vis = itemVisible(it);
+			it.el.hidden = !it.vis;
+			state.items.push(it);
+			if (it.type === 'line') {
+				state.totalLines++;
+				if (it.vis) state.visLines++;
+			}
+			if (!frag) frag = document.createDocumentFragment();
+			frag.appendChild(it.el);
+		} else {
+			// insertBefore needs its reference node in the live DOM
+			if (frag) { el.list.appendChild(frag); frag = null; }
+			insertItem(it);
+		}
 		if (it.type === 'line') newLines++;
 		else if (it.type === 'ann') queueAnnListRender();
 	}
+	if (frag) el.list.appendChild(frag);
 	inbox.length = 0;
 
 	trim(atBottom);
@@ -457,6 +544,9 @@ function flush() {
 		el.pill.hidden = false;
 		el.pill.textContent = `${state.newCount} new line${state.newCount === 1 ? '' : 's'} ↓`;
 	}
+
+	lastFlushEnd = performance.now();
+	lastFlushDur = lastFlushEnd - t0;
 }
 
 /* ══════════════════════════════ ingest ══════════════════════════════ */
@@ -480,7 +570,8 @@ function ingestLine(l) {
 	noteSource(l.src);
 	if (l.seq > state.lastSeq) state.lastSeq = l.seq;
 	if (l.seq > state.head) state.head = l.seq;
-	enqueue({ type: 'line', seq: l.seq, t: l.t, id: null, data: l, el: renderLine(l), vis: true });
+	// el stays null until flush(): lines dropped by the burst cap never render
+	enqueue({ type: 'line', seq: l.seq, t: l.t, id: null, data: l, el: null, vis: true });
 	return true;
 }
 
@@ -558,7 +649,7 @@ function ingestAnnotation(a) {
 		queueAnnListRender();
 		return true;
 	}
-	enqueue({ type: 'ann', seq: a.seq == null ? state.head : a.seq, t: a.t, id: a.id, data: a, el: renderAnn(a), vis: true });
+	enqueue({ type: 'ann', seq: a.seq == null ? state.head : a.seq, t: a.t, id: a.id, data: a, el: null, vis: true });
 	return true;
 }
 
@@ -923,7 +1014,7 @@ async function addUserNote(seq, text) {
 	state.annIds.add(tempId);
 	state.anns.push(optimistic);
 	state.pendingAnns.push({ tempId, seq, kind: 'note', text });
-	enqueue({ type: 'ann', seq, t: optimistic.t, id: tempId, data: optimistic, el: renderAnn(optimistic), vis: true });
+	enqueue({ type: 'ann', seq, t: optimistic.t, id: tempId, data: optimistic, el: null, vis: true });
 	queueAnnListRender();
 
 	try {
@@ -1337,7 +1428,9 @@ el.cmdBar.addEventListener('submit', async (e) => {
 	try {
 		// author matters: reading a session back, "who typed this" changes how
 		// everything after it is interpreted.
-		await jpost('/api/send', { port, data, newline: '\r\n', annotate: true, author: 'user' });
+		// No `newline`: let the server fall back to the source's configured
+		// eol (some device shells choke on a terminator they don't expect).
+		await jpost('/api/send', { port, data, annotate: true, author: 'user' });
 		// the resulting `command` annotation arrives over the stream
 	} catch (err) {
 		el.cmdText.value = data;
