@@ -118,3 +118,7 @@ to anchor at the current head.
 - Don't poll in a loop. Use `wait`.
 - Don't re-read from seq 0. Use `--since`.
 - Don't dump a large `tail` "to be safe". Use `summary` and then target it.
+- Don't attach, detach, or re-baud ports (`/api/attach`, `/api/detach`)
+  unless asked. The human owns the device picker, and those calls are saved
+  to `config.json`. If a task truly needs a temporary switch, pass
+  `"persist": false`.
