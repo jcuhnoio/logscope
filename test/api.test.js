@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startServer } from "../src/server.js";
+import { startServer, persistSource, loadConfig } from "../src/server.js";
 
 async function boot(t, extraCfg = {}) {
 	const proj = fs.mkdtempSync(path.join(os.tmpdir(), "logscope-api-"));
@@ -201,4 +201,79 @@ test("devices report the configured port name for known adapters", async (t) => 
 		assert.ok("configuredAs" in d, "device entries carry configuredAs");
 		assert.ok("attachedAs" in d, "device entries carry attachedAs");
 	}
+});
+
+test("persistSource: attach/detach round-trip into config.json without touching other keys", () => {
+	const proj = fs.mkdtempSync(path.join(os.tmpdir(), "logscope-persist-"));
+	const file = path.join(proj, ".logscope", "config.json");
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(
+		file,
+		JSON.stringify({
+			port: 7799,
+			commands: { build: "make" },
+			sources: [{ name: "board", type: "serial", device: "/dev/cu.old", baud: 9600, eol: "\r" }],
+		})
+	);
+	try {
+		const cfg = loadConfig(proj);
+		// baud/device change keeps per-source settings
+		persistSource(cfg, "board", { type: "serial", device: "/dev/cu.new", baud: 115200, disabled: false });
+		let disk = JSON.parse(fs.readFileSync(file, "utf8"));
+		assert.deepEqual(disk.sources, [{ name: "board", type: "serial", device: "/dev/cu.new", baud: 115200, eol: "\r" }]);
+		assert.deepEqual(disk.commands, { build: "make" });
+		assert.equal(disk.port, 7799);
+
+		// a new device is appended
+		persistSource(cfg, "modem", { type: "serial", device: "/dev/cu.m", baud: 921600, disabled: false });
+		// detach disables rather than deleting
+		persistSource(cfg, "board", { disabled: true });
+		disk = JSON.parse(fs.readFileSync(file, "utf8"));
+		assert.equal(disk.sources.length, 2);
+		assert.equal(disk.sources[0].disabled, true);
+		assert.equal(disk.sources[0].eol, "\r");
+		assert.equal(disk.sources[1].baud, 921600);
+
+		// re-attach clears the flag
+		persistSource(cfg, "board", { disabled: false });
+		disk = JSON.parse(fs.readFileSync(file, "utf8"));
+		assert.ok(!("disabled" in disk.sources[0]));
+
+		// a half-edited config is left alone, not clobbered
+		fs.writeFileSync(file, "{ \"sources\": [");
+		assert.equal(persistSource(cfg, "board", { disabled: true }), false);
+		assert.equal(fs.readFileSync(file, "utf8"), "{ \"sources\": [");
+	} finally {
+		fs.rmSync(proj, { recursive: true, force: true });
+	}
+});
+
+test("disabled sources are kept in config but not opened at startup", async (t) => {
+	const proj = fs.mkdtempSync(path.join(os.tmpdir(), "logscope-disabled-"));
+	const feed = path.join(proj, "feed.log");
+	fs.writeFileSync(feed, "");
+	fs.mkdirSync(path.join(proj, ".logscope"), { recursive: true });
+	fs.writeFileSync(
+		path.join(proj, ".logscope", "config.json"),
+		JSON.stringify({
+			sources: [
+				{ name: "dev", type: "file", file: feed },
+				{ name: "gone", type: "serial", device: "/dev/does-not-exist", baud: 115200, disabled: true },
+			],
+		})
+	);
+	const s = await startServer({ projectDir: proj, port: 0 });
+	t.after(async () => {
+		for (const src of s.sources.values()) src.stop();
+		await s.store.close();
+		s.server.close();
+		fs.rmSync(proj, { recursive: true, force: true });
+	});
+	assert.deepEqual([...s.sources.keys()], ["dev"]);
+});
+
+test("non-API paths 404 now that there is no web UI", async (t) => {
+	const { api } = await boot(t);
+	const r = await api("/");
+	assert.equal(r.status, 404);
 });

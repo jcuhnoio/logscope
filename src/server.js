@@ -1,10 +1,10 @@
-// logscope daemon: ingestion + query API + SSE + static web UI.
+// logscope daemon: ingestion + query API + SSE. The human client is the TUI
+// (`logscope tui`), which talks to this same API.
 // Loopback only, no auth, no dependencies.
 
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { Store } from "./store.js";
 import { SerialPort, probeDevice } from "./serial.js";
@@ -13,17 +13,6 @@ import { ExecSource } from "./execsource.js";
 import { compileRules, makeParser } from "./parse.js";
 import { whoHolds } from "./holder.js";
 import { flashFirmware } from "./flash.js";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const WEB = path.join(HERE, "..", "web");
-
-const MIME = {
-	".html": "text/html; charset=utf-8",
-	".js": "text/javascript; charset=utf-8",
-	".css": "text/css; charset=utf-8",
-	".svg": "image/svg+xml",
-	".ico": "image/x-icon",
-};
 
 const DEFAULT_CONFIG = {
 	port: 7717,
@@ -69,6 +58,47 @@ function refreshCommands(cfg) {
 }
 const refreshFlash = refreshCommands;
 
+/**
+ * Write a runtime attach/detach back into config.json's `sources`, so the
+ * device and baud picked in the TUI are what the next `logscope start` opens.
+ *
+ * Only `sources` is touched, and it is re-read from disk first: the rest of
+ * the file is hand-edited (commands, flash) and must round-trip untouched.
+ * A detach sets `disabled` rather than deleting the entry, so per-source
+ * settings (eol, parsers, rules) are still there when it comes back.
+ */
+export function persistSource(cfg, name, patch) {
+	const file = path.join(cfg._dir, "config.json");
+	let disk = {};
+	try {
+		disk = JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch (err) {
+		// Missing is fine (fresh project). Unparseable is not: rewriting it
+		// would throw away whatever the user was halfway through typing.
+		if (err.code !== "ENOENT") return false;
+	}
+	const list = Array.isArray(disk.sources) ? disk.sources : [];
+	const i = list.findIndex((s) => s.name === name);
+	const next = { ...(i >= 0 ? list[i] : { name, type: "serial" }), ...patch };
+	if (!next.disabled) delete next.disabled;
+	if (i >= 0) list[i] = next;
+	else list.push(next);
+	disk.sources = list;
+	cfg.sources = list;
+
+	// The device switch already happened; a read-only config must not turn
+	// it into a 500. Callers surface `false` as a warning instead.
+	const tmp = `${file}.${process.pid}.tmp`;
+	try {
+		fs.writeFileSync(tmp, JSON.stringify(disk, null, 2) + "\n");
+		fs.renameSync(tmp, file);
+	} catch {
+		fs.rmSync(tmp, { force: true });
+		return false;
+	}
+	return true;
+}
+
 export function loadConfig(projectDir) {
 	const dir = path.join(projectDir, ".logscope");
 	const file = path.join(dir, "config.json");
@@ -93,7 +123,11 @@ export async function startServer({ projectDir, port }) {
 
 	// Build every parser before the Store exists: a preset typo in config must
 	// fail the whole startup without leaving a half-created session behind.
-	const parsers = (cfg.sources ?? []).map((s) => ({ s, parse: sourceParser(cfg, s) }));
+	// `disabled` sources are ones the user detached at runtime: kept in config
+	// so their settings survive, but not opened until re-attached.
+	const parsers = (cfg.sources ?? [])
+		.filter((s) => !s.disabled)
+		.map((s) => ({ s, parse: sourceParser(cfg, s) }));
 
 	const store = new Store(cfg._dir);
 
@@ -171,8 +205,7 @@ async function handle(req, res, ctx) {
 	res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,OPTIONS");
 	if (req.method === "OPTIONS") return void res.writeHead(204).end();
 
-	// ---- static ----
-	if (!p.startsWith("/api/")) return serveStatic(p, res);
+	if (!p.startsWith("/api/")) return send(res, 404, { error: `no route: ${req.method} ${p}` });
 
 	// ---- status ----
 	if (p === "/api/status") {
@@ -375,8 +408,11 @@ async function handle(req, res, ctx) {
 			sources.delete(name);
 		}
 
+		// A configured source keeps its own settings (eol, parsers) across a
+		// device or baud switch; only device and baud come from the request.
+		const conf = (cfg.sources ?? []).find((s) => s.name === name && s.type !== "file" && s.type !== "exec");
 		const next = new SerialPort(
-			{ name, device, baud, parse: sourceParser(cfg) },
+			{ ...conf, name, device, baud, parse: sourceParser(cfg, conf) },
 			store
 		);
 		sources.set(name, next);
@@ -394,7 +430,8 @@ async function handle(req, res, ctx) {
 			text: `switched ${name} → ${device} @ ${baud}`,
 			meta: { label: `→ ${device}`, port: name },
 		});
-		return send(res, 200, { ok: true, ports: status(store, sources, cfg).ports });
+		const saved = body.persist === false || persistSource(cfg, name, { type: "serial", device, baud, disabled: false });
+		return send(res, 200, { ok: true, saved, ports: status(store, sources, cfg).ports });
 	}
 
 	// ---- detach a source at runtime ----
@@ -411,7 +448,11 @@ async function handle(req, res, ctx) {
 			text: `detached ${name}`,
 			meta: { label: `⏏ ${name}`, port: name },
 		});
-		return send(res, 200, { ok: true, ports: status(store, sources, cfg).ports });
+		// Only serial ports are picked at runtime; a file/exec source detached
+		// here comes back on restart, as configured.
+		const saved =
+			body.persist === false || src.status().type !== "serial" || persistSource(cfg, name, { disabled: true });
+		return send(res, 200, { ok: true, saved, ports: status(store, sources, cfg).ports });
 	}
 
 	if (p === "/api/notes" && (req.method === "PUT" || req.method === "PATCH")) {
@@ -650,20 +691,6 @@ function stream(req, res, store, sources, cfg, from) {
 	};
 	req.on("close", done);
 	req.on("error", done);
-}
-
-function serveStatic(p, res) {
-	const rel = p === "/" ? "index.html" : p.replace(/^\/+/, "");
-	const file = path.join(WEB, rel);
-	if (!file.startsWith(WEB)) return send(res, 403, { error: "nope" });
-	if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-		return send(res, 404, { error: "not found" });
-	}
-	res.writeHead(200, {
-		"Content-Type": MIME[path.extname(file)] ?? "application/octet-stream",
-		"Cache-Control": "no-cache",
-	});
-	fs.createReadStream(file).pipe(res);
 }
 
 function send(res, code, obj) {

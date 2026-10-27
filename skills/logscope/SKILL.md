@@ -9,8 +9,8 @@ A local daemon owns the serial port, timestamps every line, and stores them
 under a monotonically increasing `seq`. You query it. **Log volume never enters
 your context unless you ask for specific lines.**
 
-The human watches the same stream in a browser, with your annotations rendered
-inline at the exact point in the log where you made them.
+The human watches the same stream in a terminal (`logscope tui`), with your
+annotations rendered inline at the exact point in the log where you made them.
 
 ## Before anything else
 
@@ -83,7 +83,7 @@ prefer that over `send` then a separate `wait`. It reports the cursor from
 `run` executes an external step (flash script, CSMS trigger, build) and anchors
 it in the same timeline as the serial log. **Use it instead of plain Bash for
 anything whose effect shows up in the logs** — that is what makes cause and
-effect line up for the human reading the web UI later.
+effect line up for the human reading the timeline later.
 
 ## Annotating — do this as you go, not at the end
 

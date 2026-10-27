@@ -20,7 +20,8 @@ its own.
 
 ## `port`
 
-HTTP port for the daemon + web UI. Default `7717`. Loopback only, no auth.
+HTTP port for the daemon (the CLI and `logscope tui` both talk to it).
+Default `7717`. Loopback only, no auth.
 `LOGSCOPE_PORT` overrides for the CLI side.
 
 ## `sources`
@@ -49,7 +50,11 @@ every line.
 A source may carry its own `parsers` and/or `rules`, overriding/extending the
 global ones below. Sources do **not** hot-reload — re-opening a tty
 mid-session is deliberate and manual (`/api/attach`, or the device picker in
-the web UI).
+`logscope tui`).
+
+Attaching, detaching, or changing baud at runtime writes back to this list, so
+the setup survives a restart. A detached serial source stays in the file with
+`"disabled": true` — skipped at startup, settings intact — until re-attached.
 
 ## `parsers` — built-in format presets
 

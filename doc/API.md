@@ -175,9 +175,20 @@ attaching a device that another port already owns is a 409 (`already attached
 as "…"`), not a silent swap. With `name` omitted: the source already on that
 device, else the first source. → `{ "ok":true, "ports":[…] }`
 
+The device and baud are written back to `config.json` `sources` (only that
+key; the rest of the file is untouched), so the next `logscope start` opens the
+same port at the same rate. A configured source keeps its own settings (`eol`,
+`parsers`, `rules`) across the switch. Pass `"persist": false` for a temporary
+switch that should not survive a restart.
+
 ### `POST /api/detach` `{ "name":"secc" }`
 Stops the named source and drops it from the port list; the session log and a
 `mark` annotation keep the record. → `{ "ok":true, "ports":[…] }`
+
+For a serial source the config entry is marked `"disabled": true` (not
+deleted, so its settings survive), and it stays closed across restarts until
+re-attached. `"persist": false` skips this. File and exec sources are never
+rewritten; they come back on restart as configured.
 
 ### `GET /api/notes` → `{ "markdown":"...", "path":"..." , "mtime":... }`
 ### `PUT /api/notes` `{ "markdown":"..." }` → `{ "ok":true, "mtime":…, "bytes":… }`

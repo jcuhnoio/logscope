@@ -397,9 +397,14 @@ const COMMANDS = {
 		process.stdout.write(n.markdown);
 	},
 
+	async tui() {
+		if (!process.stdout.isTTY || !process.stdin.isTTY) die("logscope tui needs an interactive terminal");
+		const { runTui } = await import("../src/tui/app.js");
+		await runTui({ base: BASE });
+	},
+
 	async open() {
-		spawn("open", [BASE], { detached: true, stdio: "ignore" }).unref();
-		process.stdout.write(`opened ${BASE}\n`);
+		die("the web UI is gone — use `logscope tui`");
 	},
 
 	help() {
@@ -410,7 +415,8 @@ const COMMANDS = {
 const HELP = `logscope — timestamped serial logs with inline agent annotations
 
   start      [--project DIR] [--detach]     run the daemon
-  open                                      open the web UI
+  tui                                       the human view: live log, filters,
+                                            send, device/baud, annotations
   status                                    sources, head cursor, line counts
 
 read (cheap first):

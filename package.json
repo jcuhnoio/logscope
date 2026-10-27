@@ -16,5 +16,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "terminal-kit": "^3.1.4"
   }
 }

@@ -3,28 +3,22 @@
 [![test](https://github.com/jcuhnoio/logscope/actions/workflows/test.yml/badge.svg)](https://github.com/jcuhnoio/logscope/actions/workflows/test.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Timestamped serial-log monitoring with inline agent annotations, a web UI, and
-a durable per-project knowledge file.
+Timestamped serial-log monitoring with inline agent annotations, a terminal
+UI, and a durable per-project knowledge file.
 
 It exists so that debugging hardware with an AI agent does not mean pasting
 walls of serial output into a chat window. The daemon owns the port; the human
-watches the stream in a browser; the agent queries it with a cursor and writes
+watches the stream in a terminal; the agent queries it with a cursor and writes
 its analysis back into the timeline at the point where each thing happened.
 
-Zero runtime dependencies — Node 18+ and `stty`, nothing else. macOS and
-Linux; no Windows (everything goes through `stty`).
-
-![An AI agent reading device logs and executing scripts in real time according to what the logs say — flashing firmware over XMODEM, triggering a server-side OTA, and annotating its analysis inline at the exact log lines that prompted each action](doc/logscope-demo.png)
-
-*A live session: the agent flashes firmware, watches the boot, kicks a
-server-side OTA, and narrates its reasoning — every annotation anchored to the
-log line that prompted it.*
+One runtime dependency (`terminal-kit`, for the TUI) — otherwise Node 18+ and
+`stty`. macOS and Linux; no Windows (everything goes through `stty`).
 
 ## Install
 
 ```sh
 git clone https://github.com/jcuhnoio/logscope
-cd logscope && npm link        # puts `logscope` on PATH
+cd logscope && npm install && npm link   # puts `logscope` on PATH
 ```
 
 Using Claude Code? The repo doubles as a plugin marketplace that teaches the
@@ -56,8 +50,8 @@ cat > <project>/.logscope/config.json <<'EOF'
 }
 EOF
 
-logscope start --project <project>   # daemon + web UI on http://127.0.0.1:7717
-logscope open                        # browser
+logscope start --project <project> --detach   # daemon on 127.0.0.1:7717
+logscope tui                                  # the live view, in any terminal
 ```
 
 Nothing device-specific is baked in. Log-format recognition is a configurable
@@ -73,10 +67,22 @@ you forget.
 
 ## Two ways in
 
-**The browser** is for the human: a split view with the timestamped log on the
-left and knowledge/annotations on the right. Agent annotations render inline in
-the log at their anchor point. You can send commands to the device from the
-bottom bar and annotate any line yourself.
+**The TUI** (`logscope tui`) is for the human: the timestamped log with agent
+annotations rendered inline at their anchor point, and the annotation list
+beside it. It is built for firehoses: incoming lines only append to a buffer,
+and the screen is redrawn at most ~30 times a second, touching only the cells
+that changed — so 20k lines/s costs about what 20 does. Close it whenever; the
+daemon keeps capturing, and any number of TUIs can attach at once.
+
+| key | |
+|---|---|
+| `/` | filter — plain text or `/regex/`; `esc` clears |
+| `1`–`4`, `s` | toggle err/wrn/inf/dbg; toggle sources |
+| `↑↓` `PgUp/PgDn` `g`/`G` | scroll (pauses follow) · top · bottom + follow |
+| `:` | send to the device — `⏎` on an empty line sends a bare newline; `tab` picks the port |
+| `d`, `b` | attach/detach serial devices; baud rate — both saved to `config.json` |
+| `tab`, `a` | focus the annotation list (`⏎` jumps to one); show/hide it |
+| `#`, `w`, `?` | jump to a seq; wrap long lines; all keys |
 
 **The CLI** is for the agent, and its output is shaped for a token budget:
 
@@ -150,7 +156,7 @@ configured → `flash` refuses and points at the contract doc.
 `<project>/.logscope/knowledge.md` is the durable, human- and agent-editable
 notes file: what the tags mean, which command drives which flow, what a healthy
 boot looks like. It is the part that stops the setup being re-explained every
-session. Edit it in the browser, or `logscope knowledge --append "..."`.
+session. Edit it directly, or `logscope knowledge --append "..."`.
 
 ## On disk
 
@@ -173,9 +179,8 @@ after the fact.
 
 The daemon binds to `127.0.0.1` only, with no auth: anything that can reach
 the port can send bytes to your hardware and run configured commands. Do not
-reverse-proxy it onto a network you don't trust. For remote access (checking
-the bench from a phone), put it behind something that authenticates the
-*network*, e.g. `tailscale serve localhost:7717`.
+reverse-proxy it onto a network you don't trust. For remote access, `ssh` to
+the bench machine and run `logscope tui` there.
 
 ## Platform notes
 
@@ -193,7 +198,7 @@ read loop applies. Windows is unsupported.
 ## Developing
 
 ```sh
-npm test     # node:test — no dependencies to install
+npm install && npm test     # node:test
 ```
 
 CI runs the suite on ubuntu + macos × Node 18/22. The serial layer itself
